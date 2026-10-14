@@ -98,6 +98,9 @@ type logState struct {
 	// covers. Unclean recovery redoes every kept chunk, so only chunks older
 	// than durableEpoch may be removed.
 	durableEpoch uint64
+	// windowStart is the oldest version the index serves. Older entries of
+	// kept chunks are pruned; their versions are read once sealed.
+	windowStart uint64
 }
 
 func (db *DB) seq() int64      { return db.entryBase + int64(len(db.entries)) }

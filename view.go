@@ -34,7 +34,10 @@ func (db *DB) view(v uint64) (*View, error) {
 	if v < db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v > db.sealed[len(db.sealed)-1].end) {
 		return nil, ErrVersion
 	}
-	if v >= db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v >= db.sealed[len(db.sealed)-1].end) {
+	if v >= db.chunks[0].start && v < db.windowStart && (len(db.sealed) == 0 || v < db.sealed[0].start || v > db.sealed[len(db.sealed)-1].end) {
+		return nil, ErrWindow // pruned from the index and not sealed yet
+	}
+	if v >= db.windowStart && v >= db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v >= db.sealed[len(db.sealed)-1].end) {
 		db.pins[v]++
 		return &View{db: db, v: v, window: true}, nil
 	}
@@ -185,6 +188,45 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 	}
 }
 
+// cutIndex removes the oldest k entries and their pieces. Stale heads stay
+// until dropChunks; readers treat heads below pieceBase as absent.
+func (db *DB) cutIndex(k int) {
+	if k == 0 {
+		return
+	}
+	first := db.entryBase + int64(k)
+	pb := db.pieceBase + int64(sort.Search(len(db.pieces), func(j int) bool { return db.pieceEntry(db.pieces[j]) >= first }))
+	db.pieces = db.pieces[pb-db.pieceBase:]
+	db.pieceBase = pb
+	db.entries = db.entries[k:]
+	db.entryBase = first
+}
+
+// pruneIndex frees index entries of versions no rewind, open view or window
+// sealing needs, so memory follows RetainVersions instead of whole epochs.
+// Versions it passes stay readable once their epoch is sealed. Caller holds db.mu.
+func (db *DB) pruneIndex() {
+	if db.version <= db.o.RetainVersions {
+		return
+	}
+	p := db.version - db.o.RetainVersions
+	for v := range db.pins {
+		p = min(p, v)
+	}
+	// The sealer may rebuild an unsealed chunk's end state from the window.
+	for i, c := range db.chunks[:len(db.chunks)-1] {
+		if !c.sealed {
+			p = min(p, db.chunks[i+1].start)
+			break
+		}
+	}
+	if p <= db.windowStart {
+		return
+	}
+	db.cutIndex(sort.Search(len(db.entries), func(j int) bool { return db.entries[j].ver > p }))
+	db.windowStart = p
+}
+
 // dropChunks removes sealed chunks from the window once no view needs them. Caller holds db.mu.
 func (db *DB) dropChunks() (dropped []*chunk) {
 	for len(db.chunks) > 1 && db.chunks[0].sealed && db.chunks[1].epoch <= db.durableEpoch {
@@ -201,19 +243,13 @@ func (db *DB) dropChunks() (dropped []*chunk) {
 		for k < len(db.entries) && db.entries[k].epoch() == uint32(c.epoch)&(1<<24-1) {
 			k++
 		}
-		if k > 0 {
-			first := db.entryBase + int64(k)
-			pb := db.pieceBase + int64(sort.Search(len(db.pieces), func(j int) bool { return db.pieceEntry(db.pieces[j]) >= first }))
-			db.pieces = db.pieces[pb-db.pieceBase:]
-			db.pieceBase = pb
-			db.entries = db.entries[k:]
-			db.entryBase += int64(k)
-			for l, p := range db.heads {
-				if p < db.pieceBase {
-					delete(db.heads, l)
-				}
+		db.cutIndex(k)
+		for l, p := range db.heads {
+			if p < db.pieceBase {
+				delete(db.heads, l)
 			}
 		}
+		db.windowStart = max(db.windowStart, next)
 		db.blocks = slices.DeleteFunc(db.blocks, func(b block) bool {
 			if b.c == c && db.rootIdx[b.root] == b.ver && b.ver != next {
 				delete(db.rootIdx, b.root)

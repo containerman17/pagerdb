@@ -431,7 +431,7 @@ func (db *DB) Rewind(v uint64) error {
 	if v > db.version {
 		return ErrVersion
 	}
-	if (db.version > db.o.RetainVersions && v < db.version-db.o.RetainVersions) || v < db.chunks[0].start {
+	if (db.version > db.o.RetainVersions && v < db.version-db.o.RetainVersions) || v < max(db.chunks[0].start, db.windowStart) {
 		return ErrWindow
 	}
 	for pv := range db.pins {

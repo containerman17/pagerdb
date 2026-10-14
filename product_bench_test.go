@@ -446,40 +446,51 @@ func BenchmarkSealEpoch(b *testing.B) {
 
 // BenchmarkWindowIndexMemory reports the Go heap that the rewind window index
 // holds per retained write: 32-byte writes at random offsets, one leaf each.
-// Log bytes live in mapped files and are not counted.
+// Log bytes live in mapped files and are not counted. Retain32 runs 300 blocks
+// inside one epoch, so only pruning by version keeps the index near 32 blocks.
 func BenchmarkWindowIndexMemory(b *testing.B) {
-	const blocks, writes = 100, 20000
-	for range b.N {
-		db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 17, EpochVersions: 1000})
-		if err != nil {
-			b.Fatal(err)
-		}
-		r, err := db.Alloc(64 << 20)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if _, _, err = db.Commit(); err != nil {
-			b.Fatal(err)
-		}
-		rng := rand.New(rand.NewPCG(5, 6))
-		var before, after runtime.MemStats
-		runtime.GC()
-		runtime.ReadMemStats(&before)
-		var value [32]byte
-		for range blocks {
-			for range writes {
-				le.PutUint64(value[:], rng.Uint64())
-				db.Write(r, rng.IntN(64<<20/32)*32, value[:])
+	for _, tc := range []struct {
+		name           string
+		retain, blocks uint64
+	}{{"Retain4096", 4096, 100}, {"Retain32", 32, 300}} {
+		b.Run(tc.name, func(b *testing.B) {
+			const writes = 20000
+			for range b.N {
+				db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 17, RetainVersions: tc.retain, EpochVersions: 1000})
+				if err != nil {
+					b.Fatal(err)
+				}
+				r, err := db.Alloc(64 << 20)
+				if err != nil {
+					b.Fatal(err)
+				}
+				if _, _, err = db.Commit(); err != nil {
+					b.Fatal(err)
+				}
+				rng := rand.New(rand.NewPCG(5, 6))
+				var before, after runtime.MemStats
+				runtime.GC()
+				runtime.ReadMemStats(&before)
+				var value [32]byte
+				for range tc.blocks {
+					for range writes {
+						le.PutUint64(value[:], rng.Uint64())
+						db.Write(r, rng.IntN(64<<20/32)*32, value[:])
+					}
+					if _, _, err = db.Commit(); err != nil {
+						b.Fatal(err)
+					}
+				}
+				runtime.GC()
+				runtime.ReadMemStats(&after)
+				heap := float64(after.HeapAlloc - before.HeapAlloc)
+				b.ReportMetric(float64(len(db.entries))/writes, "retained-blocks")
+				b.ReportMetric(heap/float64(len(db.entries)), "heap-B/retained-write")
+				b.ReportMetric(heap/1e6, "heap-MB")
+				if err = db.Close(); err != nil {
+					b.Fatal(err)
+				}
 			}
-			if _, _, err = db.Commit(); err != nil {
-				b.Fatal(err)
-			}
-		}
-		runtime.GC()
-		runtime.ReadMemStats(&after)
-		b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/(blocks*writes), "heap-B/write")
-		if err = db.Close(); err != nil {
-			b.Fatal(err)
-		}
+		})
 	}
 }

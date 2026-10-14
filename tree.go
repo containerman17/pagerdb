@@ -232,6 +232,7 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	db.blocks = append(db.blocks, block{ver: db.version, root: root, c: c, end: c.tail})
 	db.rootIdx[root] = db.version
 	db.blockStart, db.blockSeq = c.tail, db.seq()
+	db.pruneIndex()
 	if db.version-c.start >= db.o.EpochVersions || c.tail >= db.o.EpochBytes {
 		if err := db.rotate(); err != nil {
 			return root, db.version, err

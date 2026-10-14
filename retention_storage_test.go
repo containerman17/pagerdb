@@ -74,3 +74,52 @@ func TestRetentionStoragePinAndRewind(t *testing.T) {
 		}
 	}
 }
+
+// TestIndexFollowsRetention checks that the window index keeps about
+// RetainVersions blocks inside a long epoch, and that pruned versions become
+// readable again once their epoch is sealed.
+func TestIndexFollowsRetention(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14, RetainVersions: 4, EpochVersions: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(4 * LeafSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for v := 1; v <= 30; v++ {
+		for leaf := range 4 {
+			db.Write(r, leaf*LeafSize+v%7, []byte{byte(v)})
+		}
+		if _, _, err = db.Commit(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(db.entries) != 4*4 {
+		t.Fatalf("index holds %d entries, want %d", len(db.entries), 4*4)
+	}
+	check := func(vw *View, v int) {
+		b := make([]byte, 1)
+		if err := vw.Read(r, 3*LeafSize+v%7, 1, b); err != nil || b[0] != byte(v) {
+			t.Fatalf("version %d: %v %v", v, b, err)
+		}
+	}
+	vw, err := db.View(db.Version() - 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(vw, int(db.Version()-4))
+	vw.Close()
+	if _, err = db.View(10); err != ErrWindow {
+		t.Fatalf("pruned unsealed version: %v", err)
+	}
+	if err = db.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if vw, err = db.View(10); err != nil {
+		t.Fatal(err)
+	}
+	defer vw.Close()
+	check(vw, 10)
+}

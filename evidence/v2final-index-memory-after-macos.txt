@@ -1,3 +1,6 @@
-BenchmarkWindowIndexMemory-8   	       1	 851139709 ns/op	        32.51 heap-B/write
-BenchmarkWindowIndexMemory-8   	       1	 857307417 ns/op	        32.47 heap-B/write
-BenchmarkWindowIndexMemory-8   	       1	 985337917 ns/op	        32.45 heap-B/write
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 884697417 ns/op	        32.52 heap-B/retained-write	        65.03 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 785048167 ns/op	        32.45 heap-B/retained-write	        64.91 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 779923500 ns/op	        32.45 heap-B/retained-write	        64.90 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	2075785708 ns/op	        39.49 heap-B/retained-write	        25.28 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	2201737917 ns/op	        39.46 heap-B/retained-write	        25.25 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	2126417875 ns/op	        39.47 heap-B/retained-write	        25.26 heap-MB	        32.00 retained-blocks

@@ -1,0 +1,4 @@
+before BenchmarkWindowIndexMemory/Retain32-8         	       1	2340155292 ns/op	        81.94 heap-B/retained-write	       491.6 heap-MB	       300.0 retained-blocks
+before           1427128320  maximum resident set size
+after BenchmarkWindowIndexMemory/Retain32-8         	       1	2284484583 ns/op	        39.71 heap-B/retained-write	        25.41 heap-MB	        32.00 retained-blocks
+after            469630976  maximum resident set size
