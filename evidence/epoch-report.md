@@ -51,3 +51,11 @@ Sealing now uses each existing cumulative row's last-change epoch to read the ch
 `TestSealBaseUsesPreviousChangeAndGenesis` verifies a leaf unchanged across three epochs, later head writes, first allocation of a new leaf, genesis metadata, and inconsistent base references. Focused race suite `go test -race -run 'Test(SealBase|EpochCumulative|Views|SealedRoot)' -count=1`: PASS12.673s.
 
 `go test -run '^$' -bench '^BenchmarkSealBaseBacklog$' -benchtime=200ms -count=3`, with 10,000 pending writes after the checkpoint: former window reconstruction 160.720-203.250us/base; immutable sealed reconstruction 6.236-8.986us/base. This isolates base reconstruction and does not claim a sustained throughput result.
+
+## Reused frame buffers
+
+The sealer now allocates the raw frame and compressed frame buffers once per epoch, then reuses them for every leaf/frame. Previously each leaf allocated capacity for a full 263168-byte frame even when it changed only a few bytes.
+
+`go test -run '^TestSealMemoryMeasure$' -v -count=1` now covers both one repeatedly changed leaf and distinct leaves. For broad writes, 1MiB of old/new log payload across8192leaves sampled peak extra heap6,375,768B and total allocation11,423,936B; 8MiB across65536leaves sampled peak13,352,528B and total allocation74,282,688B. Elapsed426ms and4.166s. The same-leaf cases sampled peaks11,394,048B and10,778,552B. OS cache/mapped log pages are excluded. Total allocation includes short-lived per-leaf reconstruction allocations and is not peak live memory.
+
+`go test -race -run 'Test(Epoch|SealBase|DiskSort|SealedRoot)' -count=1`: PASS2.156s. Exact output: epoch-memory-reused.txt and epoch-buffer-race.txt.

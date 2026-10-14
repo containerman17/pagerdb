@@ -338,6 +338,8 @@ func (db *DB) seal(c *chunk) error {
 		return nil
 	}
 	base := make([]byte, LeafSize)
+	payload := make([]byte, 0, LeafSize+frameCap)
+	compressed := make([]byte, 0, LeafSize+frameCap)
 	for readErr == nil {
 		leaf := le.Uint64(rec[:])
 		if err = copyOld(leaf); err != nil {
@@ -362,12 +364,12 @@ func (db *DB) seal(c *chunk) error {
 		}
 		off, _ := out.Seek(0, io.SeekCurrent)
 		frames := uint32(0)
-		payload := append(make([]byte, 0, LeafSize+frameCap), base...)
+		payload = append(payload[:0], base...)
 		first, prev := le.Uint64(rec[16:]), le.Uint64(rec[16:])
 		flush := func() error {
 			var h [frameHdr]byte
 			body := payload
-			compressed := enc.EncodeAll(payload, nil)
+			compressed = enc.EncodeAll(payload, compressed[:0])
 			if len(compressed)*10 <= len(payload)*9 {
 				body = compressed
 				h[0] = 1

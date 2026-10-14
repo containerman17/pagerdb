@@ -202,59 +202,71 @@ func BenchmarkEpochCompression(b *testing.B) {
 }
 
 func TestSealMemoryMeasure(t *testing.T) {
-	for _, writes := range []int{8192, 65536} {
-		db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 1 << 30, EpochBytes: 1 << 40})
-		if e != nil {
-			t.Fatal(e)
-		}
-		r, e := db.Alloc(4096)
-		if e != nil {
-			t.Fatal(e)
-		}
-		var b [64]byte
-		for i := 0; i < writes; i++ {
-			b[0] = byte(i)
-			db.Write(r, 0, b[:])
-		}
-		if _, _, e = db.Commit(); e != nil {
-			t.Fatal(e)
-		}
-		runtime.GC()
-		var m runtime.MemStats
-		runtime.ReadMemStats(&m)
-		base := m.HeapAlloc
-		var peak atomic.Uint64
-		peak.Store(base)
-		done := make(chan struct{})
-		stopped := make(chan struct{})
-		go func() {
-			defer close(stopped)
-			ticker := time.NewTicker(time.Millisecond)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-done:
-					return
-				case <-ticker.C:
-					runtime.ReadMemStats(&m)
-					for {
-						old := peak.Load()
-						if m.HeapAlloc <= old || peak.CompareAndSwap(old, m.HeapAlloc) {
-							break
+	for _, broad := range []bool{false, true} {
+		for _, writes := range []int{8192, 65536} {
+			db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 17, EpochVersions: 1 << 30, EpochBytes: 1 << 40})
+			if e != nil {
+				t.Fatal(e)
+			}
+			size := 4096
+			if broad {
+				size = writes * LeafSize
+			}
+			r, e := db.Alloc(size)
+			if e != nil {
+				t.Fatal(e)
+			}
+			var b [64]byte
+			for i := 0; i < writes; i++ {
+				b[0] = byte(i)
+				off := 0
+				if broad {
+					off = i * LeafSize
+				}
+				db.Write(r, off, b[:])
+			}
+			if _, _, e = db.Commit(); e != nil {
+				t.Fatal(e)
+			}
+			runtime.GC()
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			base := m.HeapAlloc
+			total := m.TotalAlloc
+			var peak atomic.Uint64
+			peak.Store(base)
+			done := make(chan struct{})
+			stopped := make(chan struct{})
+			go func() {
+				defer close(stopped)
+				ticker := time.NewTicker(time.Millisecond)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-done:
+						return
+					case <-ticker.C:
+						runtime.ReadMemStats(&m)
+						for {
+							old := peak.Load()
+							if m.HeapAlloc <= old || peak.CompareAndSwap(old, m.HeapAlloc) {
+								break
+							}
 						}
 					}
 				}
+			}()
+			start := time.Now()
+			e = db.Seal()
+			close(done)
+			<-stopped
+			if e != nil {
+				t.Fatal(e)
 			}
-		}()
-		start := time.Now()
-		e = db.Seal()
-		close(done)
-		<-stopped
-		if e != nil {
-			t.Fatal(e)
+			runtime.ReadMemStats(&m)
+			t.Logf("broad=%t writes=%d log_payload=%d peak_extra_heap=%d allocated=%d elapsed=%s", broad, writes, writes*128, peak.Load()-base, m.TotalAlloc-total, time.Since(start))
+			db.Close()
 		}
-		t.Logf("writes=%d log_payload=%d peak_extra_heap=%d elapsed=%s", writes, writes*128, peak.Load()-base, time.Since(start))
-		db.Close()
 	}
 }
 
