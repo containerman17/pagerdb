@@ -16,16 +16,23 @@ import (
 // BenchmarkSustained measures the complete write and commit loop. Use
 // -benchtime=10000x for the product workload of 10000 blocks.
 func BenchmarkSustained(b *testing.B) {
-	benchmarkSustained(b, true)
+	benchmarkSustained(b, true, false)
 }
 
 // BenchmarkWriteCommitOnly measures the same workload without epoch rotation.
 // It excludes sealing and database cleanup from the timed interval.
 func BenchmarkWriteCommitOnly(b *testing.B) {
-	benchmarkSustained(b, false)
+	benchmarkSustained(b, false, false)
 }
 
-func benchmarkSustained(b *testing.B, seal bool) {
+// BenchmarkWriteCommitUntimedSeal measures owner work with bounded live history.
+// It completes sealing every 100 versions outside the timer. Its blocks/s metric
+// excludes that work; wall-blocks/s and excluded-seal-ms disclose the full cost.
+func BenchmarkWriteCommitUntimedSeal(b *testing.B) {
+	benchmarkSustained(b, false, true)
+}
+
+func benchmarkSustained(b *testing.B, seal, untimedSeal bool) {
 	o := Options{MaxLeaves: 1 << 17, EpochVersions: 100, EpochBytes: 64 << 20}
 	if !seal {
 		o.EpochVersions, o.EpochBytes = math.MaxUint64, math.MaxInt64
@@ -45,7 +52,17 @@ func benchmarkSustained(b *testing.B, seal bool) {
 	times := make([]int64, b.N)
 	var value [64]byte
 	b.ResetTimer()
-	var writeTime, commitTime time.Duration
+	var writeTime, commitTime, excludedTime time.Duration
+	sealOutsideTimer := func() {
+		start := time.Now()
+		b.StopTimer()
+		err := db.Seal()
+		b.StartTimer()
+		excludedTime += time.Since(start)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
 	start := time.Now()
 	for block := 0; block < b.N; block++ {
 		write := time.Now()
@@ -61,8 +78,11 @@ func benchmarkSustained(b *testing.B, seal bool) {
 		duration := time.Since(commit)
 		commitTime += duration
 		times[block] = duration.Nanoseconds()
+		if untimedSeal && db.version-db.cur.start >= 100 {
+			sealOutsideTimer()
+		}
 	}
-	loopTime := time.Since(start)
+	loopTime := time.Since(start) - excludedTime
 	var drainTime time.Duration
 	if seal {
 		// Include completion of background sealing in sustained throughput.
@@ -72,10 +92,18 @@ func benchmarkSustained(b *testing.B, seal bool) {
 		}
 		drainTime = time.Since(drain)
 	}
-	elapsed := time.Since(start)
+	if untimedSeal && db.version > db.cur.start {
+		sealOutsideTimer()
+	}
+	wallTime := time.Since(start)
+	elapsed := wallTime - excludedTime
 	b.StopTimer()
 	slices.Sort(times)
 	b.ReportMetric(float64(b.N)/elapsed.Seconds(), "blocks/s")
+	if untimedSeal {
+		b.ReportMetric(float64(b.N)/wallTime.Seconds(), "wall-blocks/s")
+		b.ReportMetric(float64(excludedTime)/1e6, "excluded-seal-ms")
+	}
 	b.ReportMetric(float64(writeTime)/float64(b.N)/1e6, "avg-write-ms")
 	b.ReportMetric(float64(commitTime)/float64(b.N)/1e6, "avg-commit-ms")
 	b.ReportMetric(float64(loopTime-writeTime-commitTime)/float64(b.N)/1e6, "avg-loop-other-ms")
