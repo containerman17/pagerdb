@@ -383,27 +383,28 @@ func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
 	off := leaf*LeafSize + offset
 	end := off + uint64(len(out))
 	p, ok := db.heads[uint32(leaf)]
-	if !ok || p < db.pieceBase || db.entries[db.pieces[p-db.pieceBase].entry-db.entryBase].ver <= version {
+	if !ok || p < db.pieceBase || db.entries[db.pieceEntry(db.pieces[p-db.pieceBase])-db.entryBase].ver <= version {
 		copy(out, db.state[off:end])
 		return
 	}
 	var covered [LeafSize / 64]uint64 // bit i: out[i] came from an undo image
 	for ok && p >= db.pieceBase {
 		pc := db.pieces[p-db.pieceBase]
-		e := &db.entries[pc.entry-db.entryBase]
+		e := &db.entries[db.pieceEntry(pc)-db.entryBase]
 		if e.ver <= version {
 			break
 		}
-		lo, hi := max(e.off, off), min(e.off+uint64(e.n), end)
+		m, eo, en := db.rec(e)
+		lo, hi := max(eo, off), min(eo+en, end)
 		if lo < hi {
-			copy(out[lo-off:hi-off], e.c.m[e.pos+entryHdr+int64(lo-e.off):])
+			copy(out[lo-off:hi-off], m[entryHdr+lo-eo:])
 			for i := lo - off; i < hi-off; {
 				n := min(hi-off-i, 64-i%64)
 				covered[i/64] |= ^uint64(0) >> (64 - n) << (i % 64)
 				i += n
 			}
 		}
-		p = pc.prev
+		p, ok = db.prevPiece(p, pc)
 	}
 	for i := 0; i < len(out); {
 		w := covered[i/64] >> (i % 64)

@@ -3,6 +3,7 @@ package pagerdb
 import (
 	"fmt"
 	"hash/crc32"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -37,19 +38,39 @@ type chunk struct {
 	endState *os.File
 }
 
+// entry indexes one log record of the window. The state offset and length
+// stay in the mapped record, and the struct has no pointers, so the garbage
+// collector never scans the index.
 type entry struct {
-	ver   uint64
-	off   uint64 // state file offset
-	n     uint32
-	c     *chunk
-	pos   int64 // record position in c
-	piece int64 // seq of its first piece
+	ver uint64
+	loc uint64 // record position in its chunk << 24 | low 24 bits of the chunk epoch
 }
 
+func (e *entry) epoch() uint32 { return uint32(e.loc) & (1<<24 - 1) }
+
 // piece links an entry into the per-leaf chain (newest first) the views walk.
+// Both links are 32-bit: the window holds fewer than 2^32 entries and pieces.
 type piece struct {
-	entry, prev int64
-	leaf        uint32
+	entry uint32 // low bits of the entry seq
+	back  uint32 // distance to the previous piece of the leaf, 0 if none
+	leaf  uint32
+}
+
+// rec returns e's mapped log record and the state range it covers.
+func (db *DB) rec(e *entry) (m []byte, off, n uint64) {
+	m = db.chunks[(e.epoch()-uint32(db.chunks[0].epoch))&(1<<24-1)].m[e.loc>>24:]
+	return m, le.Uint64(m[24:]), uint64(le.Uint32(m[8:]))
+}
+
+// pieceEntry returns the entry seq of pc.
+func (db *DB) pieceEntry(pc piece) int64 {
+	return db.entryBase + int64(pc.entry-uint32(db.entryBase))
+}
+
+// prevPiece returns the previous piece seq of the leaf of piece p, if it is in the window.
+func (db *DB) prevPiece(p int64, pc piece) (int64, bool) {
+	prev := p - int64(pc.back)
+	return prev, pc.back != 0 && prev >= db.pieceBase
 }
 
 type block struct {
@@ -171,14 +192,21 @@ func (db *DB) put(r Region, fo uint64, b []byte) { db.logEntry(r, fo, uint64(len
 
 func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
 	seq := db.seq()
-	db.entries = append(db.entries, entry{ver: ver, off: fo, n: uint32(n), c: c, pos: pos, piece: db.pieceSeq()})
+	if len(db.entries) >= math.MaxUint32 || len(db.pieces) >= math.MaxUint32-LeafSize {
+		panic("pagerdb: window holds 2^32 log entries; reduce RetainVersions")
+	}
+	if pos >= 1<<40 {
+		panic("pagerdb: log chunk reached 1 TiB; reduce EpochBytes")
+	}
+	db.entries = append(db.entries, entry{ver: ver, loc: uint64(pos)<<24 | c.epoch&(1<<24-1)})
 	for l := fo / LeafSize; l <= (fo+n-1)/LeafSize; l++ {
-		prev, ok := db.heads[uint32(l)]
-		if !ok {
-			prev = -1
+		p := db.pieceSeq()
+		back := uint32(0)
+		if prev, ok := db.heads[uint32(l)]; ok && p-prev <= math.MaxUint32 {
+			back = uint32(p - prev)
 		}
-		db.heads[uint32(l)] = db.pieceSeq()
-		db.pieces = append(db.pieces, piece{entry: seq, prev: prev, leaf: uint32(l)})
+		db.heads[uint32(l)] = p
+		db.pieces = append(db.pieces, piece{entry: uint32(seq), back: back, leaf: uint32(l)})
 	}
 }
 

@@ -1,0 +1,3 @@
+BenchmarkWindowIndexMemory-8   	       1	 851139709 ns/op	        32.51 heap-B/write
+BenchmarkWindowIndexMemory-8   	       1	 857307417 ns/op	        32.47 heap-B/write
+BenchmarkWindowIndexMemory-8   	       1	 985337917 ns/op	        32.45 heap-B/write

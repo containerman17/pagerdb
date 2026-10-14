@@ -49,22 +49,21 @@ func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
 
 func (db *DB) undoEntries(pos, seq int64, cut bool) {
 	for i := db.seq() - 1; i >= seq; i-- {
-		e := db.entries[i-db.entryBase]
-		copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
-		db.markDirty(e.off, uint64(e.n))
+		m, off, n := db.rec(&db.entries[i-db.entryBase])
+		copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
+		db.markDirty(off, n)
 		if cut {
-			e.c.m[e.pos] = 0
+			m[0] = 0
 		}
-		for p := db.pieceSeq() - 1; p >= e.piece; p-- {
-			pc := db.pieces[p-db.pieceBase]
-			if pc.prev >= db.pieceBase {
-				db.heads[pc.leaf] = pc.prev
+		for len(db.pieces) > 0 && db.pieceEntry(db.pieces[len(db.pieces)-1]) >= i {
+			p, pc := db.pieceSeq()-1, db.pieces[len(db.pieces)-1]
+			if prev, ok := db.prevPiece(p, pc); ok {
+				db.heads[pc.leaf] = prev
 			} else {
 				delete(db.heads, pc.leaf)
 			}
+			db.pieces = db.pieces[:len(db.pieces)-1]
 		}
-		db.pieces = db.pieces[:e.piece-db.pieceBase]
-		clear(db.entries[i-db.entryBase:])
 		db.entries = db.entries[:i-db.entryBase]
 	}
 	if cut {
@@ -274,7 +273,7 @@ func (db *DB) open() error {
 			last.close()
 			return fmt.Errorf("pagerdb: chunk %d: no checkpoint", e)
 		}
-		if n := len(db.blocks); n > 0 && (db.blocks[n-1].ver != cpVer || db.blocks[n-1].root != cpRoot) {
+		if n := len(db.blocks); n > 0 && (db.blocks[n-1].ver != cpVer || db.blocks[n-1].root != cpRoot || db.chunks[len(db.chunks)-1].epoch+1 != e) {
 			c.close()
 			last.close()
 			return fmt.Errorf("pagerdb: recovery: log gap before chunk %d", e)
@@ -294,7 +293,7 @@ func (db *DB) open() error {
 		}
 	}
 	if n := len(db.blocks); n > 0 {
-		if v, r, _, _, _ := scan(last.m[:cpRec]); db.blocks[n-1].ver != v || db.blocks[n-1].root != r {
+		if v, r, _, _, _ := scan(last.m[:cpRec]); db.blocks[n-1].ver != v || db.blocks[n-1].root != r || db.chunks[len(db.chunks)-1].epoch+1 != last.epoch {
 			last.close()
 			return fmt.Errorf("pagerdb: recovery: log gap before chunk %d", last.epoch)
 		}
@@ -347,11 +346,12 @@ func (db *DB) replay(c *chunk) error {
 		}
 	}
 	need := uint64(0)
-	for _, e := range db.entries {
-		if e.off > db.maxLeaves*LeafSize || uint64(e.n) > db.maxLeaves*LeafSize-e.off {
+	for i := range db.entries {
+		_, off, n := db.rec(&db.entries[i])
+		if off > db.maxLeaves*LeafSize || n > db.maxLeaves*LeafSize-off {
 			return fmt.Errorf("pagerdb: recovery: log state offset out of bounds")
 		}
-		need = max(need, e.off+uint64(e.n))
+		need = max(need, off+n)
 	}
 	for _, b := range bl {
 		for _, pos := range b.entries {
@@ -382,8 +382,9 @@ func (db *DB) replay(c *chunk) error {
 	}
 	// The state file is synced at least as far as the oldest kept checkpoint,
 	// so redoing every kept chunk in order reaches the last complete block.
-	for _, e := range db.entries {
-		copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr+int64(e.n):])
+	for i := range db.entries {
+		m, off, n := db.rec(&db.entries[i])
+		copy(db.state[off:off+n], m[entryHdr+n:])
 	}
 	for _, b := range bl {
 		for _, pos := range b.entries {

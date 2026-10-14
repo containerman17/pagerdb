@@ -280,19 +280,19 @@ func TestRecoveryInterruptedRewind(t *testing.T) {
 				t.Fatal(err)
 			}
 			if stage == "partial state" {
-				e := db.entries[len(db.entries)-1]
-				copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
+				m, off, n := db.rec(&db.entries[len(db.entries)-1])
+				copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
 				if err = db.syncState(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if stage == "removed log" {
 				for i := len(db.entries) - 1; i >= 0; i-- {
-					e := db.entries[i]
-					if e.ver <= 3 {
+					if db.entries[i].ver <= 3 {
 						break
 					}
-					copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
+					m, off, n := db.rec(&db.entries[i])
+					copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
 				}
 				if err = db.syncState(); err != nil {
 					t.Fatal(err)

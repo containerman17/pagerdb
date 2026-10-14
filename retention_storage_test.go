@@ -45,22 +45,11 @@ func TestRetentionStoragePinAndRewind(t *testing.T) {
 	if removed == 0 {
 		t.Fatal("closing pin did not prune retained history")
 	}
-	for _, e := range oldEntries[:removed] {
-		if e.c != nil {
-			t.Fatal("discarded entry retains chunk pointer")
-		}
-	}
 	if len(db.entries) > 0 && &db.entries[0] != &oldEntries[removed] {
 		t.Fatal("pruning copied retained entries")
 	}
-	tail := db.entries
 	if err = db.Rewind(9); err != nil {
 		t.Fatal(err)
-	}
-	for _, e := range tail[len(db.entries):] {
-		if e.c != nil {
-			t.Fatal("rewind retains discarded chunk pointer")
-		}
 	}
 	for v := byte(10); v <= 18; v++ {
 		db.Write(r, 0, []byte{v + 80})
