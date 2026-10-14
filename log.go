@@ -378,7 +378,7 @@ func (db *DB) growChunk(c *chunk, need int64) {
 func (db *DB) chunkMap() int64 { return min(db.o.EpochBytes, 4<<30) + chunkInit }
 
 // logEntry appends an entry for n bytes at state offset fo. With b != nil it also stores b
-// (after the entry is complete, so every state change has its old bytes in the log).
+// (after its undo image is complete, so every state change has old bytes in the log).
 func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	pos := db.reserve(entryHdr + 2*int64(n))
 	e := db.cur.m[pos : pos+entryHdr+2*int64(n)]
@@ -435,7 +435,7 @@ func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
 	}
 }
 
-// Write logs the old and new bytes, stores b at off and marks the leaves dirty.
+// Write retains an undo image, stores b at off and marks the leaves dirty.
 func (db *DB) Write(r Region, off int, b []byte) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
@@ -512,8 +512,7 @@ func (db *DB) syncState() error {
 	return db.treeF.Sync()
 }
 
-// entryChecksum protects the header and the immutable undo image in one pass. New
-// bytes are protected by the block checksum because Touch fills them only at Commit.
+// entryChecksum validates legacy E records. New U records use only the block checksum.
 func entryChecksum(e []byte, n uint64) uint32 {
 	return crc32.Checksum(e[8:entryHdr+n], castagnoli)
 }
