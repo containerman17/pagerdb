@@ -1,0 +1,24 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkXORSealedRead/EVM/Back1-8   	     100	       994.6 ns/op
+BenchmarkXORSealedRead/EVM/Back1-8   	     100	       959.6 ns/op
+BenchmarkXORSealedRead/EVM/Back1-8   	     100	       920.0 ns/op
+BenchmarkXORSealedRead/EVM/Back100-8 	     100	     10474 ns/op
+BenchmarkXORSealedRead/EVM/Back100-8 	     100	      9975 ns/op
+BenchmarkXORSealedRead/EVM/Back100-8 	     100	     10281 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-8         	     100	   1492355 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-8         	     100	   1529218 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-8         	     100	   1510706 ns/op
+BenchmarkXORSealedRead/Random/Back1-8          	     100	       772.5 ns/op
+BenchmarkXORSealedRead/Random/Back1-8          	     100	       746.2 ns/op
+BenchmarkXORSealedRead/Random/Back1-8          	     100	       735.4 ns/op
+BenchmarkXORSealedRead/Random/Back100-8        	     100	      5681 ns/op
+BenchmarkXORSealedRead/Random/Back100-8        	     100	      5301 ns/op
+BenchmarkXORSealedRead/Random/Back100-8        	     100	      5295 ns/op
+BenchmarkXORSealedRead/Random/Back10000-8      	     100	    973448 ns/op
+BenchmarkXORSealedRead/Random/Back10000-8      	     100	   1022169 ns/op
+BenchmarkXORSealedRead/Random/Back10000-8      	     100	   1044829 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	4.288s
