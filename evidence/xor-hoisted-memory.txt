@@ -1,0 +1,8 @@
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10399912 allocated=11256280 elapsed=21.471791ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10835416 allocated=11463680 elapsed=42.068625ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2724368 allocated=2724520 elapsed=124.621ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2725112 allocated=2725200 elapsed=805.53025ms
+--- PASS: TestSealMemoryMeasure (1.22s)
+PASS
+ok  	github.com/containerman17/pagerdb	1.547s

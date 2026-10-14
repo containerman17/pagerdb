@@ -6,7 +6,7 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
-	"sort"
+	"slices"
 )
 
 // diskSort bounds sorting memory to 4096 records and two merge buffers.
@@ -43,7 +43,15 @@ func diskSort(dir string, src *os.File, size int, less func([]byte, []byte) bool
 		for i := 0; i < n/size; i++ {
 			rows[i] = buf[i*size : (i+1)*size]
 		}
-		sort.SliceStable(rows[:n/size], func(i, j int) bool { return less(rows[i], rows[j]) })
+		slices.SortStableFunc(rows[:n/size], func(a, b []byte) int {
+			if less(a, b) {
+				return -1
+			}
+			if less(b, a) {
+				return 1
+			}
+			return 0
+		})
 		for _, r := range rows[:n/size] {
 			if _, e = writer.Write(r); e != nil {
 				return nil, e
@@ -57,6 +65,7 @@ func diskSort(dir string, src *os.File, size int, less func([]byte, []byte) bool
 	x, y := make([]byte, size), make([]byte, size)
 	a := bufio.NewReaderSize(bytes.NewReader(nil), 64<<10)
 	b := bufio.NewReaderSize(bytes.NewReader(nil), 64<<10)
+	var left, right io.SectionReader
 	for width := int64(size * 4096); width < total; width *= 2 {
 		next, e := os.CreateTemp(dir, "merge-")
 		if e != nil {
@@ -65,8 +74,10 @@ func diskSort(dir string, src *os.File, size int, less func([]byte, []byte) bool
 		writer.Reset(next)
 		for start := int64(0); start < total; start += 2 * width {
 			mid, end := min(start+width, total), min(start+2*width, total)
-			a.Reset(io.NewSectionReader(run, start, mid-start))
-			b.Reset(io.NewSectionReader(run, mid, end-mid))
+			left = *io.NewSectionReader(run, start, mid-start)
+			a.Reset(&left)
+			right = *io.NewSectionReader(run, mid, end-mid)
+			b.Reset(&right)
 			_, ex := io.ReadFull(a, x)
 			_, ey := io.ReadFull(b, y)
 			for ex == nil || ey == nil {

@@ -65,3 +65,11 @@ Committed seeds include a raw record frame, a compressed full-copy run, a valid 
 `go test -run '^TestSealMemoryMeasure$' -v -count=1`: broad1MiB old/new payload across8192leaves sampled peak extra heap3,606,016B,total allocation4,559,072B,97ms; broad8MiB across65536leaves peak10,267,032B,total17,383,448B,622ms. Repeated single-leaf cases sampled peaks11,296,624B and14,213,352B. Samples exclude existing mmap pages and OS page cache, and include garbage waiting for collection. Exact output xor-memory.txt.
 
 The requested workload bytes-per-record and age1/100/10000 latency measurements are owned by xor_bench_test.go and the coordinator. No broad benchmarks were started by this implementation task. Full macOS/Linux suites and native userfaultfd validation are owned by the coordinator; this report makes no unverified platform claim.
+
+## Final allocation audit and buffer hoisting
+
+Escape analysis (`go test -run '^$' -gcflags='-m=2'`) found that fixed arrays declared inside loops still allocated on the heap for each log reference, dense row, directory row, cumulative row and parsed root. They passed through buffered I/O interfaces. The sealer now declares these buffers once outside loops and closures. Parsing also reuses one root buffer. External sorting uses slices.SortStableFunc and two reusable SectionReader values, avoiding per-run interface boxes and per-merge reader allocations. Frame contents and format did not change.
+
+After this mechanical change, `go test -race -run 'Test(XOR|EpochCumulative|SealedRoot|DiskSort)|TestViews' -count=1`: PASS9.698s.
+
+Final `go test -run '^TestSealMemoryMeasure$' -v -count=1`: broad1MiB payload sampled peak extra heap2,724,368B,total allocated2,724,520B; broad8MiB peak2,725,112B,total2,725,200B. An eightfold input increase added only680bytes of total allocation. Same-leaf peaks10,399,912B and10,835,416B, with total allocations11,256,280B and11,463,680B; larger runs exercise larger bounded zstd working tables. Exact output is xor-hoisted-memory.txt. These measurements supersede the earlier pre-hoisting memory numbers. Audit logs remain under .scratch.

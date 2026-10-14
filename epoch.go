@@ -245,6 +245,7 @@ func (db *DB) seal(c *chunk) error {
 		return err
 	}
 	end, nRoots := c.start, uint64(1)
+	var ref [40]byte
 	for pos := int64(cpRec); pos < c.tail; {
 		r := c.m[pos:]
 		switch r[0] {
@@ -257,13 +258,12 @@ func (db *DB) seal(c *chunk) error {
 				at := fo + p
 				k := min(n-p, LeafSize-at%LeafSize)
 				oldAt := uint64(pos) + entryHdr + p
-				var rec [40]byte
 				for i, v := range []uint64{at / LeafSize, uint64(pos) + p, ver, oldAt} {
-					le.PutUint64(rec[i*8:], v)
+					le.PutUint64(ref[i*8:], v)
 				}
-				le.PutUint16(rec[32:], uint16(at%LeafSize))
-				le.PutUint16(rec[34:], uint16(k))
-				if _, err = pw.Write(rec[:]); err != nil {
+				le.PutUint16(ref[32:], uint16(at%LeafSize))
+				le.PutUint16(ref[34:], uint16(k))
+				if _, err = pw.Write(ref[:]); err != nil {
 					return err
 				}
 				p += k
@@ -348,21 +348,23 @@ func (db *DB) seal(c *chunk) error {
 		return fmt.Errorf("pagerdb: epoch checkpoint discontinuity")
 	}
 	oldAt, nLeaves, dirBytes, denseBytes := uint64(0), uint64(0), uint64(0), uint64(0)
+	var copiedIndex [idxRec]byte
 	copyOld := func(until uint64) error {
 		if previous == nil {
 			return nil
 		}
 		for oldAt < previous.nLeaves {
-			r, e := previous.indexRecord(oldAt)
+			var e error
+			copiedIndex, e = previous.indexRecord(oldAt)
 			if e != nil {
 				return e
 			}
-			if uint64(le.Uint32(r[:])) >= until {
+			if uint64(le.Uint32(copiedIndex[:])) >= until {
 				break
 			}
-			clear(r[4:16])
-			clear(r[24:])
-			if _, e = iw.Write(r[:]); e != nil {
+			clear(copiedIndex[4:16])
+			clear(copiedIndex[24:])
+			if _, e = iw.Write(copiedIndex[:]); e != nil {
 				return e
 			}
 			oldAt++
@@ -373,6 +375,9 @@ func (db *DB) seal(c *chunk) error {
 	payload := make([]byte, 0, frameCap+LeafSize)
 	compressed := make([]byte, 0, frameCap+LeafSize)
 	var rec [40]byte
+	var inherited, indexRow [idxRec]byte
+	var frameDirectory [frameDirRec]byte
+	var denseRow [denseRec]byte
 	_, readErr := io.ReadFull(sr, rec[:])
 	for readErr == nil {
 		leaf := le.Uint64(rec[:])
@@ -380,7 +385,6 @@ func (db *DB) seal(c *chunk) error {
 			return err
 		}
 		prior := uint64(0)
-		var inherited [idxRec]byte
 		if previous != nil && oldAt < previous.nLeaves {
 			r, e := previous.indexRecord(oldAt)
 			if e != nil {
@@ -437,12 +441,11 @@ func (db *DB) seal(c *chunk) error {
 			if _, e = out.Write(body); e != nil {
 				return e
 			}
-			var dr [frameDirRec]byte
-			le.PutUint64(dr[:], uint64(off))
-			le.PutUint64(dr[8:], firstIndex)
-			le.PutUint32(dr[16:], runCount)
-			le.PutUint32(dr[20:], uint32(flags))
-			if _, e = fw.Write(dr[:]); e != nil {
+			le.PutUint64(frameDirectory[:], uint64(off))
+			le.PutUint64(frameDirectory[8:], firstIndex)
+			le.PutUint32(frameDirectory[16:], runCount)
+			le.PutUint32(frameDirectory[20:], uint32(flags))
+			if _, e = fw.Write(frameDirectory[:]); e != nil {
 				return e
 			}
 			dirBytes += frameDirRec
@@ -472,11 +475,10 @@ func (db *DB) seal(c *chunk) error {
 						return err
 					}
 				}
-				var row [denseRec]byte
-				le.PutUint32(row[:], ver)
-				le.PutUint16(row[4:], uint16(off+lo))
-				le.PutUint16(row[6:], uint16(hi-lo))
-				if _, err = dw.Write(row[:]); err != nil {
+				le.PutUint32(denseRow[:], ver)
+				le.PutUint16(denseRow[4:], uint16(off+lo))
+				le.PutUint16(denseRow[6:], uint16(hi-lo))
+				if _, err = dw.Write(denseRow[:]); err != nil {
 					return err
 				}
 				denseBytes += denseRec
@@ -484,7 +486,7 @@ func (db *DB) seal(c *chunk) error {
 					newest = ver
 				}
 				oldest = ver
-				payload = append(payload, row[:]...)
+				payload = append(payload, denseRow[:]...)
 				payload = append(payload, delta[lo:hi]...)
 				count++
 				runCount++
@@ -506,15 +508,14 @@ func (db *DB) seal(c *chunk) error {
 			}
 			continue
 		}
-		var row [idxRec]byte
-		le.PutUint32(row[:], uint32(leaf))
-		le.PutUint32(row[4:], frames)
-		le.PutUint64(row[8:], leafDir)
-		le.PutUint64(row[16:], c.epoch)
-		le.PutUint64(row[24:], prior)
-		le.PutUint64(row[32:], leafDense)
-		le.PutUint64(row[40:], count)
-		if _, err = iw.Write(row[:]); err != nil {
+		le.PutUint32(indexRow[:], uint32(leaf))
+		le.PutUint32(indexRow[4:], frames)
+		le.PutUint64(indexRow[8:], leafDir)
+		le.PutUint64(indexRow[16:], c.epoch)
+		le.PutUint64(indexRow[24:], prior)
+		le.PutUint64(indexRow[32:], leafDense)
+		le.PutUint64(indexRow[40:], count)
+		if _, err = iw.Write(indexRow[:]); err != nil {
 			return err
 		}
 		nLeaves++
@@ -553,8 +554,8 @@ func (db *DB) seal(c *chunk) error {
 	index.Seek(0, 0)
 	ir := bufio.NewReaderSize(index, 64<<10)
 	ow := bufio.NewWriterSize(out, 64<<10)
+	var r [idxRec]byte
 	for i := uint64(0); i < nLeaves; i++ {
-		var r [idxRec]byte
 		if _, err = io.ReadFull(ir, r[:]); err != nil {
 			return err
 		}
@@ -701,8 +702,8 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 		}
 	}
 	var prevRoot [32]byte
+	var r [rootRec]byte
 	for i := uint64(0); i < s.nRoots; i++ {
-		var r [rootRec]byte
 		if _, e := ra.ReadAt(r[:], int64(s.rootsOff+i*rootRec)); e != nil {
 			return nil, e
 		}
