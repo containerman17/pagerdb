@@ -1,0 +1,2 @@
+PASS
+ok  	github.com/containerman17/pagerdb	10.969s

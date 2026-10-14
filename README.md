@@ -57,9 +57,11 @@ remain in RAM and scale with the retained writes.
 
 **Sealing** runs in the background after `EpochVersions` (default 10000) or
 `EpochBytes` (default 1 GiB). It writes compact log references to temporary files,
-sorts fixed-size runs, and performs two-way external merges. Frames, the index, and
-the root table are streamed through disk staging into `EpochStore.Put`. RAM contains
-only fixed sorting/merge buffers and one frame, not the whole epoch. Scratch disk
+partitions contiguous leaf ranges across up to GOMAXPROCS workers, radix-sorts
+fixed 32768-record runs, and performs two-way external merges. Each worker writes
+its section through large buffers. Frames, indexes and roots stream through disk
+staging into `EpochStore.Put`. Reused sorting and compression buffers bound memory
+per worker independently of epoch size. Scratch disk
 space grows with the epoch. Rotation waits when two epochs are active or queued,
 so a fast writer cannot create an unbounded sealing backlog. This can delay rotation
 commits when sealing or storage is slow. Recovery may load an older backlog; new
@@ -303,8 +305,10 @@ The epoch magic is `PGEPOCH3`. The state format remains `PAGERDB2`. Header, 64 b
 56 root table byte offset u64
 ```
 
-The physical order is frames, frame directories, dense change lists, cumulative
-leaf index, and roots. Each frame starts with this 32-byte header:
+After the header, each worker section contains frames, frame directories, and
+dense change lists for a contiguous leaf range. Sections appear in leaf order,
+followed by the cumulative leaf index and roots. All stored offsets are absolute
+file offsets. Each frame starts with this 32-byte header:
 
 ```
 0 flags u8 (bit 0: zstd, bit 1: closing leaf copy), 1..3 zero padding

@@ -1,0 +1,48 @@
+File: sustained-parallel.test
+Type: cpu
+Time: 2026-10-14 13:14:12 JST
+Duration: 11.34s, Total samples = 26.18s (230.90%)
+Showing nodes accounting for 23.28s, 88.92% of 26.18s total
+Dropped 143 nodes (cum <= 0.13s)
+Showing top 40 nodes out of 134
+      flat  flat%   sum%        cum   cum%
+         0     0%     0%     11.31s 43.20%  runtime.mcall
+         0     0%     0%     11.30s 43.16%  runtime.schedule
+         0     0%     0%     11.10s 42.40%  runtime.findRunnable
+         0     0%     0%      8.57s 32.73%  runtime.stopm
+     8.52s 32.54% 32.54%      8.52s 32.54%  runtime.pthread_cond_wait
+         0     0% 32.54%      8.52s 32.54%  runtime.semasleep
+         0     0% 32.54%      8.51s 32.51%  runtime.mPark (inline)
+         0     0% 32.54%      8.51s 32.51%  runtime.notesleep
+         0     0% 32.54%      7.25s 27.69%  runtime.goexit0
+     4.50s 17.19% 49.73%      4.50s 17.19%  syscall.rawsyscalln
+         0     0% 49.73%      4.50s 17.19%  syscall.syscalln
+         0     0% 49.73%      4.20s 16.04%  syscall.syscall
+         0     0% 49.73%      4.06s 15.51%  runtime.park_m
+         0     0% 49.73%      3.57s 13.64%  github.com/containerman17/pagerdb.parallel.func1
+         0     0% 49.73%      3.57s 13.64%  sync.(*WaitGroup).Go.func1
+         0     0% 49.73%      3.51s 13.41%  github.com/containerman17/pagerdb.(*DB).parallelSeal.func3
+     0.05s  0.19% 49.92%      3.36s 12.83%  github.com/containerman17/pagerdb.(*DB).hashDirty.func1
+     0.01s 0.038% 49.96%      3.31s 12.64%  crypto/sha256.Sum256
+     0.16s  0.61% 50.57%      3.16s 12.07%  crypto/internal/fips140/sha256.(*Digest).Write
+         0     0% 50.57%      3.06s 11.69%  internal/poll.ignoringEINTRIO (inline)
+     0.04s  0.15% 50.73%         3s 11.46%  crypto/internal/fips140/sha256.block
+         0     0% 50.73%      2.98s 11.38%  testing.(*B).launch
+         0     0% 50.73%      2.98s 11.38%  testing.(*B).runN
+     2.96s 11.31% 62.03%      2.96s 11.31%  crypto/internal/fips140/sha256.blockSHA2
+         0     0% 62.03%      2.95s 11.27%  github.com/containerman17/pagerdb.BenchmarkSustained
+         0     0% 62.03%      2.95s 11.27%  github.com/containerman17/pagerdb.benchmarkSustained
+         0     0% 62.03%      2.86s 10.92%  runtime.systemstack
+         0     0% 62.03%      2.74s 10.47%  github.com/containerman17/pagerdb.(*DB).Write
+         0     0% 62.03%      2.74s 10.47%  github.com/containerman17/pagerdb.(*DB).Write.func1
+         0     0% 62.03%      2.74s 10.47%  github.com/containerman17/pagerdb.(*DB).logEntry
+         0     0% 62.03%      2.74s 10.47%  github.com/containerman17/pagerdb.(*DB).put (inline)
+         0     0% 62.03%      2.74s 10.47%  github.com/containerman17/pagerdb.loc.each
+     2.64s 10.08% 72.12%      2.64s 10.08%  runtime.usleep
+     0.01s 0.038% 72.15%      2.43s  9.28%  runtime.stealWork
+         0     0% 72.15%      2.39s  9.13%  runtime.runqgrab
+         0     0% 72.15%      2.39s  9.13%  runtime.runqsteal
+     2.28s  8.71% 80.86%      2.28s  8.71%  runtime.memmove
+     2.11s  8.06% 88.92%      2.11s  8.06%  runtime.pthread_cond_signal
+         0     0% 88.92%      2.11s  8.06%  runtime.semawakeup
+         0     0% 88.92%      2.10s  8.02%  runtime.notewakeup

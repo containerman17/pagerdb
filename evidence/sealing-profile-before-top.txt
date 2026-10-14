@@ -1,0 +1,43 @@
+File: sustained-before.test
+Type: cpu
+Time: 2026-10-14 13:08:35 JST
+Duration: 25.46s, Total samples = 43.30s (170.10%)
+Showing nodes accounting for 42.07s, 97.16% of 43.30s total
+Dropped 172 nodes (cum <= 0.22s)
+Showing top 35 nodes out of 130
+      flat  flat%   sum%        cum   cum%
+    12.09s 27.92% 27.92%     12.09s 27.92%  syscall.rawsyscalln
+     8.89s 20.53% 48.45%      8.89s 20.53%  runtime.pthread_cond_wait
+     3.98s  9.19% 57.64%      3.98s  9.19%  runtime.memmove
+     3.21s  7.41% 65.06%      3.21s  7.41%  runtime.pthread_cond_signal
+     2.75s  6.35% 71.41%      2.75s  6.35%  crypto/internal/fips140/sha256.blockSHA2
+     2.54s  5.87% 77.27%      2.76s  6.37%  runtime.typePointers.next
+     2.46s  5.68% 82.96%      2.90s  6.70%  runtime.tryDeferToSpanScan
+     2.33s  5.38% 88.34%      5.77s 13.33%  runtime.scanObject
+     0.92s  2.12% 90.46%      0.92s  2.12%  runtime.usleep
+     0.74s  1.71% 92.17%      0.74s  1.71%  runtime.memclrNoHeapPointers
+     0.53s  1.22% 93.39%      0.53s  1.22%  runtime.madvise
+     0.26s   0.6% 94.00%      0.26s   0.6%  encoding/binary.littleEndian.PutUint32 (inline)
+     0.25s  0.58% 94.57%      0.36s  0.83%  runtime.heapArenaOf (inline)
+     0.25s  0.58% 95.15%      1.47s  3.39%  runtime.wbBufFlush1
+     0.19s  0.44% 95.59%      1.41s  3.26%  runtime.(*wbBuf).get1 (inline)
+     0.17s  0.39% 95.98%      2.55s  5.89%  runtime.bulkBarrierPreWriteSrcOnly
+     0.11s  0.25% 96.24%      2.87s  6.63%  crypto/internal/fips140/sha256.(*Digest).Write
+     0.09s  0.21% 96.44%      0.33s  0.76%  crypto/internal/fips140/sha256.(*Digest).Sum
+     0.07s  0.16% 96.61%      4.52s 10.44%  github.com/containerman17/pagerdb.(*DB).index
+     0.04s 0.092% 96.70%      3.06s  7.07%  crypto/sha256.Sum256
+     0.04s 0.092% 96.79%      0.25s  0.58%  runtime.stealWork
+     0.03s 0.069% 96.86%      3.06s  7.07%  github.com/containerman17/pagerdb.(*DB).hashDirty.func1
+     0.03s 0.069% 96.93%      6.18s 14.27%  runtime.gcDrain
+     0.02s 0.046% 96.97%      0.24s  0.55%  crypto/internal/fips140/sha256.(*Digest).checkSum
+     0.02s 0.046% 97.02%     14.01s 32.36%  github.com/containerman17/pagerdb.(*DB).seal
+     0.02s 0.046% 97.07%      1.46s  3.37%  io.ReadAtLeast
+     0.02s 0.046% 97.11%      0.31s  0.72%  runtime.bulkBarrierPreWrite
+     0.01s 0.023% 97.14%      2.76s  6.37%  crypto/internal/fips140/sha256.block
+     0.01s 0.023% 97.16%      4.45s 10.28%  github.com/containerman17/pagerdb.diskSort
+         0     0% 97.16%      1.26s  2.91%  bufio.(*Reader).Read
+         0     0% 97.16%      3.12s  7.21%  bufio.(*Writer).Flush
+         0     0% 97.16%      3.10s  7.16%  bufio.(*Writer).Write
+         0     0% 97.16%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).Write
+         0     0% 97.16%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).Write.func1
+         0     0% 97.16%      1.59s  3.67%  github.com/containerman17/pagerdb.(*DB).dropChunks

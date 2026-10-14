@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkSealEpoch/Cold-8         	       5	  73311258 ns/op	        73.31 epoch-ms	   3273732 records/s
+BenchmarkSealEpoch/Cold-8         	       5	  73839025 ns/op	        73.84 epoch-ms	   3250330 records/s
+BenchmarkSealEpoch/Cold-8         	       5	  74630908 ns/op	        74.63 epoch-ms	   3215840 records/s
+BenchmarkSealEpoch/Warm-8         	       5	  86739600 ns/op	        86.74 epoch-ms	   2766918 records/s
+BenchmarkSealEpoch/Warm-8         	       5	  68693283 ns/op	        68.69 epoch-ms	   3493805 records/s
+BenchmarkSealEpoch/Warm-8         	       5	  63632183 ns/op	        63.63 epoch-ms	   3771704 records/s
+PASS
+ok  	github.com/containerman17/pagerdb	8.422s

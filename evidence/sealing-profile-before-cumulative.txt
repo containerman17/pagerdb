@@ -1,0 +1,43 @@
+File: sustained-before.test
+Type: cpu
+Time: 2026-10-14 13:08:35 JST
+Duration: 25.46s, Total samples = 43.30s (170.10%)
+Showing nodes accounting for 23.36s, 53.95% of 43.30s total
+Dropped 172 nodes (cum <= 0.22s)
+Showing top 35 nodes out of 130
+      flat  flat%   sum%        cum   cum%
+     0.02s 0.046% 0.046%     14.01s 32.36%  github.com/containerman17/pagerdb.(*DB).seal
+         0     0% 0.046%     14.01s 32.36%  github.com/containerman17/pagerdb.(*DB).sealer
+    12.09s 27.92% 27.97%     12.09s 27.92%  syscall.rawsyscalln
+         0     0% 27.97%     12.09s 27.92%  syscall.syscalln
+         0     0% 27.97%     11.18s 25.82%  runtime.systemstack
+         0     0% 27.97%      9.59s 22.15%  runtime.mcall
+         0     0% 27.97%      9.59s 22.15%  runtime.schedule
+         0     0% 27.97%      9.30s 21.48%  runtime.findRunnable
+         0     0% 27.97%      8.94s 20.65%  runtime.stopm
+         0     0% 27.97%      8.90s 20.55%  runtime.semasleep
+         0     0% 27.97%      8.89s 20.53%  runtime.mPark (inline)
+         0     0% 27.97%      8.89s 20.53%  runtime.notesleep
+     8.89s 20.53% 48.50%      8.89s 20.53%  runtime.pthread_cond_wait
+         0     0% 48.50%      8.44s 19.49%  runtime.goexit0
+         0     0% 48.50%      6.83s 15.77%  testing.(*B).launch
+         0     0% 48.50%      6.83s 15.77%  testing.(*B).runN
+         0     0% 48.50%      6.80s 15.70%  github.com/containerman17/pagerdb.BenchmarkSustained
+         0     0% 48.50%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).Write
+         0     0% 48.50%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).Write.func1
+         0     0% 48.50%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).logEntry
+         0     0% 48.50%      6.60s 15.24%  github.com/containerman17/pagerdb.(*DB).put (inline)
+         0     0% 48.50%      6.60s 15.24%  github.com/containerman17/pagerdb.loc.each
+         0     0% 48.50%      6.43s 14.85%  github.com/containerman17/pagerdb.(*DB).seal.func4
+         0     0% 48.50%      6.22s 14.36%  syscall.syscall
+         0     0% 48.50%      6.18s 14.27%  runtime.gcBgMarkWorker.func2
+     0.03s 0.069% 48.57%      6.18s 14.27%  runtime.gcDrain
+     2.33s  5.38% 53.95%      5.77s 13.33%  runtime.scanObject
+         0     0% 53.95%      5.54s 12.79%  internal/poll.ignoringEINTRIO (inline)
+         0     0% 53.95%      5.50s 12.70%  runtime.gcBgMarkWorker
+         0     0% 53.95%      5.05s 11.66%  internal/poll.(*FD).Write
+         0     0% 53.95%      5.05s 11.66%  os.(*File).Write
+         0     0% 53.95%      5.05s 11.66%  os.(*File).write (inline)
+         0     0% 53.95%      5.05s 11.66%  syscall.Write (inline)
+         0     0% 53.95%      5.05s 11.66%  syscall.write
+         0     0% 53.95%      4.70s 10.85%  runtime.growslice

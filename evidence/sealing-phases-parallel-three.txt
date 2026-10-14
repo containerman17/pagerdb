@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkSustained-8         	   10000	   1076408 ns/op	         0.5517 avg-commit-ms	         0.0000461 avg-loop-other-ms	         0.5175 avg-write-ms	       929.0 blocks/s	        71.49 drain-ms	         0.4141 p50-commit-ms	         3.593 p99-commit-ms
+BenchmarkSustained-8         	   10000	   1222548 ns/op	         0.7252 avg-commit-ms	         0.0000444 avg-loop-other-ms	         0.4788 avg-write-ms	       818.0 blocks/s	       185.3 drain-ms	         0.4042 p50-commit-ms	        10.86 p99-commit-ms
+BenchmarkSustained-8         	   10000	   1168280 ns/op	         0.6972 avg-commit-ms	         0.0000439 avg-loop-other-ms	         0.4562 avg-write-ms	       856.0 blocks/s	       148.8 drain-ms	         0.4060 p50-commit-ms	         6.493 p99-commit-ms
+BenchmarkWriteCommitOnly-8   	   10000	   2545728 ns/op	         0.4100 avg-commit-ms	         0.0000346 avg-loop-other-ms	         2.136 avg-write-ms	       392.8 blocks/s	         0 drain-ms	         0.4010 p50-commit-ms	         0.6292 p99-commit-ms
+BenchmarkWriteCommitOnly-8   	   10000	   2883624 ns/op	         0.4048 avg-commit-ms	         0.0000337 avg-loop-other-ms	         2.479 avg-write-ms	       346.8 blocks/s	         0 drain-ms	         0.4000 p50-commit-ms	         0.5466 p99-commit-ms
+BenchmarkWriteCommitOnly-8   	   10000	   2941270 ns/op	         0.4024 avg-commit-ms	         0.0000336 avg-loop-other-ms	         2.539 avg-write-ms	       340.0 blocks/s	         0 drain-ms	         0.4003 p50-commit-ms	         0.5366 p99-commit-ms
+PASS
+ok  	github.com/containerman17/pagerdb	123.689s
