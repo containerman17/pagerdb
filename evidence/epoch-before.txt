@@ -1,0 +1,7 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkViewReadSealed-8   	  111241	      2435 ns/op	    410701 reads/s
+PASS
+ok  	github.com/containerman17/pagerdb	5.706s

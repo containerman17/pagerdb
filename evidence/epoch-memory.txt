@@ -1,0 +1,6 @@
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:256: writes=8192 log_payload=1048576 peak_extra_heap=10110936 elapsed=20.399583ms
+    epoch_v2_test.go:256: writes=65536 log_payload=8388608 peak_extra_heap=14182392 elapsed=52.339166ms
+--- PASS: TestSealMemoryMeasure (0.16s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.256s

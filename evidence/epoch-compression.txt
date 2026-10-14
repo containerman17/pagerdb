@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkEpochCompression/EVM-8         	    5881	     48814 ns/op	1434.49 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/EVM-8         	    5209	     41620 ns/op	1682.46 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/EVM-8         	    5808	     41839 ns/op	1673.66 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/Random-8      	   57907	      4235 ns/op	16535.12 MB/s	         1.000 ratio
+BenchmarkEpochCompression/Random-8      	   60880	      4472 ns/op	15657.15 MB/s	         1.000 ratio
+BenchmarkEpochCompression/Random-8      	   55791	      4405 ns/op	15897.13 MB/s	         1.000 ratio
+PASS
+ok  	github.com/containerman17/pagerdb	2.080s
