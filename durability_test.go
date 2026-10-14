@@ -476,7 +476,7 @@ func TestRecoveryRejectsStateBounds(t *testing.T) {
 				le.PutUint32(e[8:], 1)
 				le.PutUint64(e[16:], 1)
 				le.PutUint64(e[24:], o.MaxLeaves*LeafSize)
-				le.PutUint32(e[12:], entryChecksum(e, 1))
+				le.PutUint32(e[4:], entryChecksum(e, 1))
 				f, e2 := os.OpenFile(logPath, os.O_RDWR, 0)
 				if e2 != nil {
 					t.Fatal(e2)

@@ -15,7 +15,7 @@ func FuzzLogRecords(f *testing.F) {
 	e[0] = 'E'
 	le.PutUint32(e[8:], 1)
 	le.PutUint64(e[16:], 1)
-	le.PutUint32(e[12:], entryChecksum(e, 1))
+	le.PutUint32(e[4:], entryChecksum(e, 1))
 	b = append(b, e...)
 	f.Add(b)
 	f.Fuzz(func(t *testing.T, b []byte) {

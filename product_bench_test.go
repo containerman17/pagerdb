@@ -142,6 +142,7 @@ func BenchmarkDurabilityLoop(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	b.StopTimer() // keep the deferred Close out of the timing
 }
 
 type imageByteCounter int64
@@ -181,6 +182,7 @@ func BenchmarkExport(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	b.StopTimer() // keep the deferred Close out of the timing
 }
 
 func BenchmarkViewMapFirstTouch(b *testing.B) {

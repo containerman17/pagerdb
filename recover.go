@@ -110,7 +110,7 @@ loop:
 			if pos+sz > int64(len(m)) {
 				break loop
 			}
-			if le.Uint32(m[pos+12:]) != entryChecksum(m[pos:pos+sz], uint64(le.Uint32(m[pos+8:]))) {
+			if le.Uint32(m[pos+4:]) != entryChecksum(m[pos:pos+sz], uint64(le.Uint32(m[pos+8:]))) {
 				break loop
 			}
 			cur = append(cur, pos)

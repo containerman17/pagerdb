@@ -118,11 +118,16 @@ func (l loc) each(off, n uint64, f func(fileOff, pos, n uint64)) {
 
 func (db *DB) headU64(off uint64) uint64 { return le.Uint64(db.state[off:]) }
 
-// loc resolves a region at head, caching segment chains.
+// loc resolves a region at head, caching segment chains. The one-entry
+// cache check is small enough to inline into Read and Write.
 func (db *DB) loc(r Region) loc {
 	if r == db.lastR && r != 0 {
 		return db.lastLoc
 	}
+	return db.locSlow(r)
+}
+
+func (db *DB) locSlow(r Region) loc {
 	if segs, ok := db.segCache[r]; ok {
 		return loc{size: uint64(len(segs)) * SegSize, segs: segs}
 	}

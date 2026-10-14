@@ -184,6 +184,7 @@ func BenchmarkWrite32Resident(b *testing.B) {
 					b.StartTimer()
 				}
 			}
+			b.StopTimer() // keep the deferred Close, which syncs the state, out of the timing
 		})
 	}
 }

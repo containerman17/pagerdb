@@ -15,7 +15,7 @@ import (
 
 // Live log records. The tag byte is written last, so a record with a tag is complete.
 //
-//	entry:      'E' _[3] region u32 | n u32 undo crc32c u32 | version u64 | state offset u64 | old [n] | new [n]
+//	entry:      'E' _[3] undo crc32c u32 | n u32 region u32 | version u64 | state offset u64 | old [n] | new [n]
 //	block:      'B' _[3] entries u32 | version u64 | root [32] | crc32c u32 _[4]   (after its entries)
 //	checkpoint: 'C' _[7] | version u64 | root [32] | crc32c u32 _[4]              (first record of a chunk)
 const (
@@ -130,6 +130,18 @@ func (h headTab) set(l uint32, p int64) {
 		h[l>>16] = make([]int64, 1<<16)
 	}
 	h[l>>16][l&0xffff] = p + 1
+}
+
+// swap sets l's head to p and returns the previous head, with one page lookup.
+func (h headTab) swap(l uint32, p int64) (int64, bool) {
+	pg := h[l>>16]
+	if pg == nil {
+		pg = make([]int64, 1<<16)
+		h[l>>16] = pg
+	}
+	prev := pg[l&0xffff]
+	pg[l&0xffff] = p + 1
+	return prev - 1, prev != 0
 }
 
 func (h headTab) del(l uint32) {
@@ -350,15 +362,15 @@ func (db *DB) chunkMap() int64 { return min(db.o.EpochBytes, 4<<30) + chunkInit 
 func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	pos := db.reserve(entryHdr + 2*int64(n))
 	e := db.cur.m[pos : pos+entryHdr+2*int64(n)]
-	le.PutUint32(e[4:], uint32(r))
 	le.PutUint32(e[8:], uint32(n))
+	le.PutUint32(e[12:], uint32(r))
 	le.PutUint64(e[16:], db.version+1)
 	le.PutUint64(e[24:], fo)
 	copy(e[entryHdr:entryHdr+n], db.state[fo:])
 	if b != nil {
 		copy(e[entryHdr+n:], b)
 	}
-	le.PutUint32(e[12:], entryChecksum(e, n))
+	le.PutUint32(e[4:], entryChecksum(e, n))
 	e[0] = 'E'
 	if b != nil {
 		copy(db.state[fo:fo+n], b)
@@ -382,10 +394,9 @@ func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
 	for l := fo / LeafSize; l <= (fo+n-1)/LeafSize; l++ {
 		p := db.pieceSeq()
 		back := uint32(0)
-		if prev, ok := db.heads.get(uint32(l)); ok && p-prev <= math.MaxUint32 {
+		if prev, ok := db.heads.swap(uint32(l), p); ok && p-prev <= math.MaxUint32 {
 			back = uint32(p - prev)
 		}
-		db.heads.set(uint32(l), p)
 		db.pieces.push(piece{entry: uint32(seq), back: back, leaf: uint32(l)})
 	}
 }
@@ -467,10 +478,8 @@ func (db *DB) syncState() error {
 	return db.treeF.Sync()
 }
 
-// entryChecksum protects the immutable undo image. New bytes are protected by
-// the block checksum because Touch fills them only at Commit.
+// entryChecksum protects the header and the immutable undo image in one pass. New
+// bytes are protected by the block checksum because Touch fills them only at Commit.
 func entryChecksum(e []byte, n uint64) uint32 {
-	crc := crc32.Checksum(e[4:12], castagnoli)
-	crc = crc32.Update(crc, castagnoli, e[16:entryHdr])
-	return crc32.Update(crc, castagnoli, e[entryHdr:entryHdr+n])
+	return crc32.Checksum(e[8:entryHdr+n], castagnoli)
 }
