@@ -18,6 +18,10 @@ func FuzzLogRecords(f *testing.F) {
 	le.PutUint32(e[4:], entryChecksum(e, 1))
 	b = append(b, e...)
 	f.Add(b)
+	raw := append([]byte(nil), b...)
+	raw[cpRec] = 'U'
+	clear(raw[cpRec+4 : cpRec+8])
+	f.Add(raw)
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if len(b) > 1<<20 {
 			return

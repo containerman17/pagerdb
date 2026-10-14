@@ -298,7 +298,7 @@ func (db *DB) seal(c *chunk) error {
 	for pos := int64(cpRec); pos < c.tail; {
 		r := c.m[pos:]
 		switch r[0] {
-		case 'E':
+		case 'E', 'U':
 			n, ver, fo := uint64(le.Uint32(r[8:])), le.Uint64(r[16:]), le.Uint64(r[24:])
 			if ver <= c.start || ver-c.start > uint64(^uint32(0)) {
 				return fmt.Errorf("pagerdb: epoch version span exceeds uint32; reduce EpochVersions")

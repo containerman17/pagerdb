@@ -585,7 +585,7 @@ func TestRecoveryFailurePreservesUndo(t *testing.T) {
 	if _, err = f.ReadAt(tag[:], pos); err != nil {
 		t.Fatal(err)
 	}
-	if tag[0] != 'E' {
+	if tag[0] != 'U' {
 		t.Fatal("failed recovery destroyed its undo record")
 	}
 }

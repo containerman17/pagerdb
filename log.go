@@ -13,9 +13,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Live log records. The tag byte is written last, so a record with a tag is complete.
+// Live log records. The entry tag publishes its undo bytes before the state store.
+// Commit fills reserved new bytes and protects the complete block with one checksum.
 //
-//	entry:      'E' _[3] undo crc32c u32 | n u32 region u32 | version u64 | state offset u64 | old [n] | new [n]
+//	entry:      'U' _[7] | n u32 region u32 | version u64 | state offset u64 | old [n] | new [n]
 //	block:      'B' _[3] entries u32 | version u64 | root [32] | crc32c u32 _[4]   (after its entries)
 //	checkpoint: 'C' _[7] | version u64 | root [32] | crc32c u32 _[4]              (first record of a chunk)
 const (
@@ -378,8 +379,7 @@ func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	le.PutUint64(e[16:], db.version+1)
 	le.PutUint64(e[24:], fo)
 	copy(e[entryHdr:entryHdr+n], db.state[fo:])
-	le.PutUint32(e[4:], entryChecksum(e, n))
-	e[0] = 'E'
+	e[0] = 'U'
 	if b != nil {
 		copy(db.state[fo:fo+n], b)
 	}

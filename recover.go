@@ -99,7 +99,7 @@ func scan(m []byte) (cpVer uint64, cpRoot [32]byte, blocks []scanned, tail []int
 loop:
 	for pos < int64(len(m)) {
 		switch m[pos] {
-		case 'E':
+		case 'E', 'U':
 			if pos+entryHdr > int64(len(m)) {
 				break loop
 			}
@@ -110,7 +110,7 @@ loop:
 			if pos+sz > int64(len(m)) {
 				break loop
 			}
-			if le.Uint32(m[pos+4:]) != entryChecksum(m[pos:pos+sz], uint64(le.Uint32(m[pos+8:]))) {
+			if m[pos] == 'E' && le.Uint32(m[pos+4:]) != entryChecksum(m[pos:pos+sz], uint64(le.Uint32(m[pos+8:]))) {
 				break loop
 			}
 			cur = append(cur, pos)
@@ -448,6 +448,7 @@ func (db *DB) Rewind(v uint64) error {
 	if err := db.writeRewindIntent(v, b.c.epoch, b.end); err != nil {
 		return err
 	}
+	db.indexPending()
 	db.cur = b.c
 	db.cur.sealed = false
 	seq := db.seq()

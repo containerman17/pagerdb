@@ -305,14 +305,16 @@ An unclean open rebuilds the tree from state bytes, so the tree is a derived fil
 ### Log chunks
 
 Names are zero-padded twelve-digit epoch numbers under `log/`. Records are packed,
-with no alignment gaps. The tag is written after the other bytes.
+with no alignment gaps. An undo entry tag is written after its header and old bytes,
+before the state store. Commit fills its reserved new bytes and then writes the
+block checksum and commit tag.
 
 ```
 checkpoint, 56 bytes:
   0 'C', 1..7 padding, 8 version u64, 16 root [32],
   48 CRC-32C of bytes 8..47 u32, 52..55 padding
 entry, 32+2*n bytes:
-  0 'E', 1..3 padding, 4 CRC-32C of bytes 8..32+n-1 u32, 8 n u32,
+  0 'U', 1..7 reserved, 8 n u32,
   12 region u32, 16 version u64, 24 state offset u64, 32 old [n],
   32+n new [n]
 commit, 56 bytes:
@@ -320,11 +322,24 @@ commit, 56 bytes:
   16 root [32], 48 CRC-32C u32, 52..55 padding
 ```
 
-CRC-32C uses the Castagnoli polynomial. The entry undo checksum covers bytes
-8..31 and the old bytes in one pass. The commit checksum covers all complete entry
+CRC-32C uses the Castagnoli polynomial. Undo entries have no per-entry checksum.
+The reader also accepts legacy E entries with their undo checksum at byte 4.
+The commit checksum covers all complete entry
 bytes since the preceding checkpoint or commit, then commit bytes 4..47. A chunk starts with one checkpoint. Unused tail
 bytes are zero. The current chunk's file grows in 64 MiB steps; sealing truncates
 it after the last record. A tag alone is not a durability barrier.
+
+A process crash leaves the shared page cache intact. Recovery undoes raw entries
+after the last complete block, in reverse order. Write publishes each undo entry
+before changing state. Commit reconstructs new bytes per dirty leaf and builds the
+window index. A view or Undo can build that index earlier if needed. Repeated and
+overlapping writes retain their individual undo images so Mark and Undo still work.
+The new-byte space is reserved during Write but is not copied until Commit.
+
+There is no writeback ordering guarantee across an OS crash or power loss. A block
+checksum detects torn committed blocks; recovery checks the reconstructed root.
+If recovery cannot reconstruct that root, Open fails and the node must resync.
+Commit does not promise durability when it returns.
 
 `rewind` is a 32-byte durable intent: `PGREWND2 [8] | target version u64 |
 target epoch u64 | target log end u64`. The log end is immediately after the target

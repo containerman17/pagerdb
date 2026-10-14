@@ -624,7 +624,7 @@ func (s *pieceScan) fill(buf []byte) (int, error) {
 	n := 0
 	for s.pos < s.c.tail {
 		r := s.c.m[s.pos:]
-		if r[0] != 'E' {
+		if r[0] != 'E' && r[0] != 'U' {
 			s.pos += blockRec
 			continue
 		}
