@@ -1,0 +1,18 @@
+== code 60d5083 2026-10-14 17:53 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^(BenchmarkOpenVerified|BenchmarkViewMapFirstTouch)$ -benchtime=10x -count=3 .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkViewMapFirstTouch-7   	      10	     34075 ns/op	     69250 map-ns/op
+BenchmarkViewMapFirstTouch-7   	      10	     17471 ns/op	     50454 map-ns/op
+BenchmarkViewMapFirstTouch-7   	      10	     14088 ns/op	     46704 map-ns/op
+BenchmarkOpenVerified/Clean-7  	      10	   3556211 ns/op	2358.86 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Clean-7  	      10	   2751801 ns/op	3048.41 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Clean-7  	      10	   2772631 ns/op	3025.51 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-7         	      10	  23848676 ns/op	 351.74 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-7         	      10	  22021397 ns/op	 380.93 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-7         	      10	  21871318 ns/op	 383.54 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-7          	      10	   6473334 ns/op	1295.87 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-7          	      10	  11753711 ns/op	 713.70 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-7          	      10	   6615280 ns/op	1268.07 MB/s	         4.000 data-MiB	   8388608 state-B
+PASS
+ok  	github.com/containerman17/pagerdb	2.930s

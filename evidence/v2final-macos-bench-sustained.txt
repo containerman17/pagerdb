@@ -1,0 +1,16 @@
+== code 60d5083 2026-10-14 17:47 JST go test -run ^$ -bench ^(BenchmarkSustained|BenchmarkWriteCommitUntimedSeal|BenchmarkWriteCommitOnly)$ -benchtime=10000x -count=3 -timeout=60m .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkSustained-8                	   10000	    611463 ns/op	         0.4975 avg-commit-ms	         0.0000571 avg-loop-other-ms	         0.1044 avg-write-ms	         0 backpressure-events	      1635 blocks/s	        94.52 drain-ms	         0.3764 p50-commit-ms	         2.197 p99-commit-ms
+BenchmarkSustained-8                	   10000	    583101 ns/op	         0.4746 avg-commit-ms	         0.0000517 avg-loop-other-ms	         0.09892 avg-write-ms	         0 backpressure-events	      1715 blocks/s	        95.37 drain-ms	         0.3638 p50-commit-ms	         2.048 p99-commit-ms
+BenchmarkSustained-8                	   10000	    582484 ns/op	         0.4730 avg-commit-ms	         0.0000526 avg-loop-other-ms	         0.09924 avg-write-ms	         0 backpressure-events	      1717 blocks/s	       101.6 drain-ms	         0.3628 p50-commit-ms	         2.029 p99-commit-ms
+BenchmarkWriteCommitOnly-8          	   10000	    962286 ns/op	         0.3853 avg-commit-ms	         0.0000330 avg-loop-other-ms	         0.5770 avg-write-ms	         0 backpressure-events	      1039 blocks/s	         0 drain-ms	         0.3651 p50-commit-ms	         0.5755 p99-commit-ms
+BenchmarkWriteCommitOnly-8          	   10000	   2852703 ns/op	         0.3785 avg-commit-ms	         0.0000311 avg-loop-other-ms	         2.474 avg-write-ms	         0 backpressure-events	       350.5 blocks/s	         0 drain-ms	         0.3636 p50-commit-ms	         0.5144 p99-commit-ms
+BenchmarkWriteCommitOnly-8          	   10000	   2877216 ns/op	         0.3740 avg-commit-ms	         0.0000321 avg-loop-other-ms	         2.503 avg-write-ms	         0 backpressure-events	       347.6 blocks/s	         0 drain-ms	         0.3630 p50-commit-ms	         0.5179 p99-commit-ms
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    456913 ns/op	         0.3724 avg-commit-ms	         0.0000364 avg-loop-other-ms	         0.08443 avg-write-ms	         0 backpressure-events	      2189 blocks/s	         0 drain-ms	      4321 excluded-seal-ms	         0.3620 p50-commit-ms	         0.5275 p99-commit-ms	      1125 wall-blocks/s
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    469791 ns/op	         0.3777 avg-commit-ms	         0.0000379 avg-loop-other-ms	         0.09201 avg-write-ms	         0 backpressure-events	      2129 blocks/s	         0 drain-ms	      4490 excluded-seal-ms	         0.3620 p50-commit-ms	         0.5699 p99-commit-ms	      1088 wall-blocks/s
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    453744 ns/op	         0.3692 avg-commit-ms	         0.0000373 avg-loop-other-ms	         0.08450 avg-write-ms	         0 backpressure-events	      2204 blocks/s	         0 drain-ms	      4321 excluded-seal-ms	         0.3609 p50-commit-ms	         0.5385 p99-commit-ms	      1129 wall-blocks/s
+PASS
+ok  	github.com/containerman17/pagerdb	119.122s

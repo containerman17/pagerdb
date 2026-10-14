@@ -1,0 +1,21 @@
+== code 60d5083 2026-10-14 17:56 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^TestSealMemoryMeasure$ -count=3 -v -timeout=20m .
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6655680 allocated=6997768 elapsed=14.189196ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=7186264 allocated=7186264 elapsed=24.856553ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=11779744 allocated=12121232 elapsed=18.354372ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=37575408 allocated=37923072 elapsed=100.276629ms
+--- PASS: TestSealMemoryMeasure (0.29s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6635768 allocated=6988408 elapsed=11.747608ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=5730008 allocated=7186912 elapsed=22.796923ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12032480 allocated=12120752 elapsed=27.669391ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=37588120 allocated=37924600 elapsed=86.205682ms
+--- PASS: TestSealMemoryMeasure (0.27s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6627064 allocated=6987872 elapsed=10.515564ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=7172920 allocated=7186912 elapsed=22.438089ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12042568 allocated=12120104 elapsed=20.245585ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=35866296 allocated=37926584 elapsed=111.314861ms
+--- PASS: TestSealMemoryMeasure (0.29s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.850s

@@ -1,0 +1,16 @@
+== code 60d5083 2026-10-14 17:50 JST go test -run ^$ -bench ^BenchmarkWrite32Resident$ -benchtime=5000000x -count=3 -timeout=30m .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkWrite32Resident/Write-8         	 5000000	       118.0 ns/op	 271.20 MB/s
+BenchmarkWrite32Resident/Write-8         	 5000000	       119.9 ns/op	 266.94 MB/s
+BenchmarkWrite32Resident/Write-8         	 5000000	       114.9 ns/op	 278.55 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        38.86 ns/op	 823.38 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        38.42 ns/op	 832.97 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        46.45 ns/op	 688.84 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       129.8 ns/op	 246.48 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       127.7 ns/op	 250.66 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       129.1 ns/op	 247.84 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	24.276s

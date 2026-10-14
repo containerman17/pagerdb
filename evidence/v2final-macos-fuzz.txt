@@ -1,0 +1,30 @@
+== code 60d5083 2026-10-14 17:33 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzLogRecords$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 5332430 (88650/sec), new interesting: 2 (total: 31)
+fuzz: elapsed: 1m0s, execs: 5332430 (0/sec), new interesting: 2 (total: 31)
+PASS
+ok  	github.com/containerman17/pagerdb	60.516s
+== code 60d5083 2026-10-14 17:34 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzBlockRecords$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 5302721 (88850/sec), new interesting: 0 (total: 28)
+fuzz: elapsed: 1m0s, execs: 5302721 (0/sec), new interesting: 0 (total: 28)
+PASS
+ok  	github.com/containerman17/pagerdb	60.280s
+== code 60d5083 2026-10-14 17:35 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochFrame$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 4565106 (75743/sec), new interesting: 34 (total: 705)
+fuzz: elapsed: 1m0s, execs: 4565106 (0/sec), new interesting: 34 (total: 705)
+PASS
+ok  	github.com/containerman17/pagerdb	60.391s
+== code 60d5083 2026-10-14 17:36 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochIndex$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 5781358 (98672/sec), new interesting: 0 (total: 42)
+fuzz: elapsed: 1m1s, execs: 5781358 (0/sec), new interesting: 0 (total: 42)
+PASS
+ok  	github.com/containerman17/pagerdb	60.884s
+== code 60d5083 2026-10-14 17:37 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzExportImage$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 5406534 (0/sec), new interesting: 0 (total: 14)
+fuzz: elapsed: 1m1s, execs: 5406534 (0/sec), new interesting: 0 (total: 14)
+PASS
+ok  	github.com/containerman17/pagerdb	61.194s
+== code 60d5083 2026-10-14 17:38 JST GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzRewindIntent$' -fuzztime=1m .
+fuzz: elapsed: 1m0s, execs: 5350027 (89438/sec), new interesting: 0 (total: 5)
+fuzz: elapsed: 1m0s, execs: 5350027 (0/sec), new interesting: 0 (total: 5)
+PASS
+ok  	github.com/containerman17/pagerdb	60.423s

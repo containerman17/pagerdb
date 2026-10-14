@@ -1,0 +1,13 @@
+== code 60d5083 2026-10-14 17:47 JST go test -run ^$ -bench ^BenchmarkTreeColdPath$ -benchtime=100x -count=3 .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreeColdPath/Heap-8         	     100	     41779 ns/op
+BenchmarkTreeColdPath/Heap-8         	     100	     39305 ns/op
+BenchmarkTreeColdPath/Heap-8         	     100	     39538 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     11514 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     12886 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     10068 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	0.713s

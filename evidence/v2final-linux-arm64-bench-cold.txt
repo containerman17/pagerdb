@@ -1,0 +1,12 @@
+== code 60d5083 2026-10-14 17:53 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^BenchmarkTreeColdPath$ -benchtime=100x -count=3 .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreeColdPath/Heap-7         	     100	    752833 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	    848148 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	    720562 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    302718 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    292542 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    218762 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	0.456s

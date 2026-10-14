@@ -1,0 +1,12 @@
+== code 60d5083 2026-10-14 17:54 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^BenchmarkWindowIndexMemory$ -benchtime=1x -count=3 -timeout=30m .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkWindowIndexMemory/Retain4096-7         	       1	1034452485 ns/op	        27.88 heap-B/retained-write	        55.77 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-7         	       1	 998665206 ns/op	        27.83 heap-B/retained-write	        55.67 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-7         	       1	 955530664 ns/op	        27.83 heap-B/retained-write	        55.65 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-7           	       1	2932831621 ns/op	        32.55 heap-B/retained-write	        20.83 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-7           	       1	2431340263 ns/op	        32.55 heap-B/retained-write	        20.83 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-7           	       1	2664316095 ns/op	        32.54 heap-B/retained-write	        20.83 heap-MB	        32.00 retained-blocks
+PASS
+ok  	github.com/containerman17/pagerdb	11.143s

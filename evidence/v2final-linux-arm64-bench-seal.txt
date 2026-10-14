@@ -1,0 +1,12 @@
+== code 60d5083 2026-10-14 17:53 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^BenchmarkSealEpoch$ -count=3 -timeout=30m .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkSealEpoch/Cold-7         	      26	  45645375 ns/op	        45.64 epoch-ms	   5257997 records/s
+BenchmarkSealEpoch/Cold-7         	      27	  46281498 ns/op	        46.28 epoch-ms	   5185722 records/s
+BenchmarkSealEpoch/Cold-7         	      28	  41930207 ns/op	        41.93 epoch-ms	   5723877 records/s
+BenchmarkSealEpoch/Warm-7         	      33	  38985488 ns/op	        38.98 epoch-ms	   6156243 records/s
+BenchmarkSealEpoch/Warm-7         	      27	  42826400 ns/op	        42.83 epoch-ms	   5604098 records/s
+BenchmarkSealEpoch/Warm-7         	      28	  37977687 ns/op	        37.98 epoch-ms	   6319607 records/s
+PASS
+ok  	github.com/containerman17/pagerdb	31.498s

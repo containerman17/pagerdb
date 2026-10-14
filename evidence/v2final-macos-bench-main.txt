@@ -1,0 +1,37 @@
+== code 60d5083 2026-10-14 17:45 JST go test -run ^$ -bench ^(BenchmarkWrite64|BenchmarkCommit50k|BenchmarkViewReadWindow|BenchmarkViewReadSealed|BenchmarkTreePath|BenchmarkDurabilityLoop|BenchmarkExport)$ -benchtime=1s -count=3 -timeout=30m .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreePath/RandomHeap-8         	18389326	        63.70 ns/op
+BenchmarkTreePath/RandomHeap-8         	18090769	        65.85 ns/op
+BenchmarkTreePath/RandomHeap-8         	17745025	        68.03 ns/op
+BenchmarkTreePath/RandomTiles-8        	12012793	        95.69 ns/op
+BenchmarkTreePath/RandomTiles-8        	12478092	        94.28 ns/op
+BenchmarkTreePath/RandomTiles-8        	13061128	        94.18 ns/op
+BenchmarkTreePath/HotHeap-8            	96459788	        12.62 ns/op
+BenchmarkTreePath/HotHeap-8            	91934353	        12.49 ns/op
+BenchmarkTreePath/HotHeap-8            	97578499	        12.53 ns/op
+BenchmarkTreePath/HotTiles-8           	61543722	        19.35 ns/op
+BenchmarkTreePath/HotTiles-8           	61793688	        19.37 ns/op
+BenchmarkTreePath/HotTiles-8           	61574906	        19.43 ns/op
+BenchmarkWrite64-8                     	 7560367	       147.2 ns/op	 434.72 MB/s
+BenchmarkWrite64-8                     	 7998492	       151.0 ns/op	 423.75 MB/s
+BenchmarkWrite64-8                     	 8065012	       146.9 ns/op	 435.77 MB/s
+BenchmarkCommit50k-8                   	      96	  12085185 ns/op	   4137301 leaves/s
+BenchmarkCommit50k-8                   	      85	  12219967 ns/op	   4091667 leaves/s
+BenchmarkCommit50k-8                   	      94	  12382337 ns/op	   4038014 leaves/s
+BenchmarkViewReadWindow-8              	 6641505	       171.9 ns/op	   5815764 reads/s
+BenchmarkViewReadWindow-8              	 6651458	       173.2 ns/op	   5773734 reads/s
+BenchmarkViewReadWindow-8              	 6894820	       197.8 ns/op	   5056240 reads/s
+BenchmarkViewReadSealed-8              	  880332	      1153 ns/op	    867054 reads/s
+BenchmarkViewReadSealed-8              	  882450	      1178 ns/op	    848880 reads/s
+BenchmarkViewReadSealed-8              	 1038979	      1142 ns/op	    875344 reads/s
+BenchmarkDurabilityLoop-8              	   36496	     34370 ns/op
+BenchmarkDurabilityLoop-8              	   36740	     34126 ns/op
+BenchmarkDurabilityLoop-8              	   36288	     34965 ns/op
+BenchmarkExport-8                      	     553	   2159847 ns/op	1959.06 MB/s
+BenchmarkExport-8                      	     553	   2161000 ns/op	1958.02 MB/s
+BenchmarkExport-8                      	     553	   2159223 ns/op	1959.63 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	93.820s

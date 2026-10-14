@@ -1,0 +1,76 @@
+== 2026-10-14 17:31 JST CPU profiles of the write loop, base = 0d4b417, new = working tree (one-call entry checksum, headTab.swap, inlinable loc)
+PAGERDB_EVM_RETAIN=32 X.test -test.run '^$' -test.bench '^BenchmarkEVM/uniform$' -test.benchtime=200x -test.cpuprofile evm-X.out
+X.test -test.run '^$' -test.bench '^BenchmarkWrite32Resident/ReadWrite$' -test.benchtime=5000000x -test.cpuprofile rw-X.out
+go tool pprof -top -nodecount=10 -focus 'evmWrite' / -focus 'BenchmarkWrite32Resident.func1' -ignore 'Commit|Seal|Close|Open|Alloc'
+
+== EVM uniform, base
+Duration: 7.33s, Total samples = 13.22s (180.27%)
+Active filters:
+   focus=evmWrite
+Showing nodes accounting for 0.72s, 5.45% of 13.22s total
+Showing top 10 nodes out of 36
+      flat  flat%   sum%        cum   cum%
+     0.29s  2.19%  2.19%      0.32s  2.42%  (*seqBuf[entry]).push (inline)
+     0.16s  1.21%  3.40%      0.16s  1.21%  (*seqBuf[piece]).push (inline)
+     0.12s  0.91%  4.31%      0.12s  0.91%  runtime.memmove
+     0.03s  0.23%  4.54%      0.66s  4.99%  (*DB).logEntry
+     0.03s  0.23%  4.77%      0.03s  0.23%  hash/crc32.archUpdateCastagnoli
+     0.03s  0.23%  4.99%      0.03s  0.23%  runtime.memclrNoHeapPointers
+     0.02s  0.15%  5.14%      0.07s  0.53%  (*DB).Read
+     0.02s  0.15%  5.30%      0.02s  0.15%  syscall.rawsyscalln
+     0.01s 0.076%  5.37%      0.49s  3.71%  (*DB).index
+     0.01s 0.076%  5.45%      0.01s 0.076%  (*DB).loc
+
+== Write32Resident/ReadWrite, base
+Active filters:
+   focus=BenchmarkWrite32Resident.func1
+   ignore=Commit|Seal|Close|Open|Alloc
+Showing nodes accounting for 0.46s, 8.88% of 5.18s total
+Showing top 10 nodes out of 42
+      flat  flat%   sum%        cum   cum%
+     0.19s  3.67%  3.67%      0.19s  3.67%  runtime.memmove
+     0.07s  1.35%  5.02%      0.07s  1.35%  (*seqBuf[entry]).push (inline)
+     0.07s  1.35%  6.37%      0.07s  1.35%  hash/crc32.castagnoliUpdate
+     0.05s  0.97%  7.34%      0.05s  0.97%  (*seqBuf[piece]).push (inline)
+     0.02s  0.39%  7.72%      0.47s  9.07%  BenchmarkWrite32Resident.func1
+     0.02s  0.39%  8.11%      0.09s  1.74%  hash/crc32.archUpdateCastagnoli
+     0.01s  0.19%  8.30%      0.14s  2.70%  (*DB).index
+     0.01s  0.19%  8.49%      0.01s  0.19%  headTab.get (inline)
+     0.01s  0.19%  8.69%      0.01s  0.19%  loc.flat (inline)
+     0.01s  0.19%  8.88%      0.01s  0.19%  internal/runtime/atomic.(*UnsafePointer).StoreNoWB (inline)
+
+== EVM uniform, new
+Duration: 7.38s, Total samples = 13.71s (185.72%)
+Active filters:
+   focus=evmWrite
+Showing nodes accounting for 0.58s, 4.23% of 13.71s total
+Showing top 10 nodes out of 33
+      flat  flat%   sum%        cum   cum%
+     0.16s  1.17%  1.17%      0.16s  1.17%  (*seqBuf[entry]).push (inline)
+     0.15s  1.09%  2.26%      0.17s  1.24%  entryChecksum (inline)
+     0.10s  0.73%  2.99%      0.10s  0.73%  runtime.memmove
+     0.07s  0.51%  3.50%      0.07s  0.51%  (*seqBuf[piece]).push (inline)
+     0.03s  0.22%  3.72%      0.03s  0.22%  (*DB).pieceSeq (inline)
+     0.02s  0.15%  3.87%      0.02s  0.15%  headTab.swap (inline)
+     0.02s  0.15%  4.01%      0.02s  0.15%  hash/crc32.update
+     0.01s 0.073%  4.08%      0.09s  0.66%  (*DB).Read
+     0.01s 0.073%  4.16%      0.55s  4.01%  (*DB).Write
+     0.01s 0.073%  4.23%      0.29s  2.12%  (*DB).index
+
+== Write32Resident/ReadWrite, new
+Active filters:
+   focus=BenchmarkWrite32Resident.func1
+   ignore=Commit|Seal|Close|Open|Alloc
+Showing nodes accounting for 0.51s, 10.00% of 5.10s total
+Showing top 10 nodes out of 25
+      flat  flat%   sum%        cum   cum%
+     0.17s  3.33%  3.33%      0.17s  3.33%  (*seqBuf[entry]).push (inline)
+     0.15s  2.94%  6.27%      0.15s  2.94%  runtime.memmove
+     0.09s  1.76%  8.04%      0.09s  1.76%  (*seqBuf[piece]).push (inline)
+     0.03s  0.59%  8.63%      0.09s  1.76%  (*DB).Read
+     0.03s  0.59%  9.22%      0.03s  0.59%  syscall.rawsyscalln
+     0.01s   0.2%  9.41%      0.42s  8.24%  (*DB).Write
+     0.01s   0.2%  9.61%      0.29s  5.69%  (*DB).index
+     0.01s   0.2%  9.80%      0.01s   0.2%  (*DB).pieceSeq (inline)
+     0.01s   0.2% 10.00%      0.01s   0.2%  headTab.swap (inline)
+         0     0% 10.00%      0.03s  0.59%  (*DB).growChunk

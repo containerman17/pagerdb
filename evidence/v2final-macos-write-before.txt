@@ -1,0 +1,16 @@
+== code 0d4b417 with the 60d5083 bench_test.go 2026-10-14 17:45 JST go test -run '^$' -bench '^BenchmarkWrite32Resident$' -benchtime=5000000x -count=3 .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkWrite32Resident/Write-8         	 5000000	       123.1 ns/op	 259.89 MB/s
+BenchmarkWrite32Resident/Write-8         	 5000000	       120.4 ns/op	 265.78 MB/s
+BenchmarkWrite32Resident/Write-8         	 5000000	       120.4 ns/op	 265.88 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        38.96 ns/op	 821.25 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        40.86 ns/op	 783.20 MB/s
+BenchmarkWrite32Resident/Read-8          	 5000000	        40.50 ns/op	 790.13 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       134.8 ns/op	 237.33 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       136.8 ns/op	 233.90 MB/s
+BenchmarkWrite32Resident/ReadWrite-8     	 5000000	       139.7 ns/op	 229.14 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	21.717s

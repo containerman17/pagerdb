@@ -1,0 +1,13 @@
+== code 60d5083 2026-10-14 17:47 JST go test -run ^$ -bench ^BenchmarkWindowIndexMemory$ -benchtime=1x -count=3 -timeout=30m .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 760842500 ns/op	        27.90 heap-B/retained-write	        55.80 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 725076084 ns/op	        27.84 heap-B/retained-write	        55.69 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain4096-8         	       1	 721868583 ns/op	        27.83 heap-B/retained-write	        55.67 heap-MB	       100.0 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	1912979916 ns/op	        32.56 heap-B/retained-write	        20.84 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	1902909125 ns/op	        32.56 heap-B/retained-write	        20.84 heap-MB	        32.00 retained-blocks
+BenchmarkWindowIndexMemory/Retain32-8           	       1	1913432333 ns/op	        32.56 heap-B/retained-write	        20.84 heap-MB	        32.00 retained-blocks
+PASS
+ok  	github.com/containerman17/pagerdb	8.135s

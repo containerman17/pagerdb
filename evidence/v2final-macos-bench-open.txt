@@ -1,0 +1,19 @@
+== code 60d5083 2026-10-14 17:47 JST go test -run ^$ -bench ^(BenchmarkOpenVerified|BenchmarkViewMapFirstTouch)$ -benchtime=10x -count=3 .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkViewMapFirstTouch-8   	      10	     13379 ns/op	   1109542 map-ns/op
+BenchmarkViewMapFirstTouch-8   	      10	     17062 ns/op	   1293000 map-ns/op
+BenchmarkViewMapFirstTouch-8   	      10	     12112 ns/op	   1060300 map-ns/op
+BenchmarkOpenVerified/Clean-8  	      10	   5603721 ns/op	1496.97 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Clean-8  	      10	   5959292 ns/op	1407.65 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Clean-8  	      10	   5842662 ns/op	1435.75 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-8         	      10	  18555079 ns/op	 452.09 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-8         	      10	  17933142 ns/op	 467.77 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Unclean-8         	      10	  16829575 ns/op	 498.44 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-8          	      10	   8813200 ns/op	 951.82 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-8          	      10	   8805750 ns/op	 952.63 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Verify-8          	      10	   9220746 ns/op	 909.75 MB/s	         4.000 data-MiB	   8388608 state-B
+PASS
+ok  	github.com/containerman17/pagerdb	3.574s

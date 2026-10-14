@@ -95,3 +95,69 @@ fall back to retained live logs. Public View.Read is independently checked.
 The final memory campaign used three runs on every platform. The amd64 memory log
 also includes sparse RSS tests; the dedicated `xor-linux-amd64-rss.txt` fresh-process
 run supplies the reported RSS range. Final code verification is at commit 676c599.
+
+## v2 final pass (2026-10-14 JST)
+
+Code verified at commit 60d5083; later commits change only README and evidence.
+Files prefixed `v2final-` are raw outputs from this pass. Every timed run waited
+until no other `*.test` or dbreplay process used more than 20% CPU and held the
+shared lock `~/.cache/pagerdb-bench.lock` while it ran. The host also ran two
+unrelated long-lived node processes (about 1 core). macOS is the Apple M3 host;
+Linux arm64 is the OrbStack machine `pagerdb-arm64` (Ubuntu 24.04, kernel
+7.0.14-orbstack). Linux amd64 (Rosetta) ran correctness suites only.
+
+Correctness (`v2final-{macos,linux-arm64,linux-amd64}-suite.txt`):
+
+```
+go vet ./...
+go test -count=1 ./...
+go test -race -count=1 ./...
+```
+
+Linux command prefixes are in `linux-refresh-commands.md`; for Linux runs the
+PAGERDB_* variables of a command go inside the machine's `env`, after the prefix's
+`env`. Fuzzers
+(`v2final-macos-fuzz.txt`), one minute each:
+
+```
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzLogRecords$' -fuzztime=1m .
+(same for FuzzBlockRecords, FuzzEpochFrame, FuzzEpochIndex, FuzzExportImage, FuzzRewindIntent)
+```
+
+Benchmarks, three runs each (`v2final-PLATFORM-GROUP.txt`, driven group by group):
+
+```
+bench-main:      go test -run '^$' -bench '^(BenchmarkWrite64|BenchmarkCommit50k|BenchmarkViewReadWindow|BenchmarkViewReadSealed|BenchmarkTreePath|BenchmarkDurabilityLoop|BenchmarkExport)$' -benchtime=1s -count=3 -timeout=30m .
+bench-cold:      go test -run '^$' -bench '^BenchmarkTreeColdPath$' -benchtime=100x -count=3 .
+bench-open:      go test -run '^$' -bench '^(BenchmarkOpenVerified|BenchmarkViewMapFirstTouch)$' -benchtime=10x -count=3 .
+bench-xor:       go test -run '^$' -bench '^BenchmarkXORSealedRead$' -benchtime=100x -count=3 -timeout=30m .
+bench-seal:      go test -run '^$' -bench '^BenchmarkSealEpoch$' -count=3 -timeout=30m .
+bench-index:     go test -run '^$' -bench '^BenchmarkWindowIndexMemory$' -benchtime=1x -count=3 -timeout=30m .
+bench-sustained: go test -run '^$' -bench '^(BenchmarkSustained|BenchmarkWriteCommitUntimedSeal|BenchmarkWriteCommitOnly)$' -benchtime=10000x -count=3 -timeout=60m .
+xor-metrics:     PAGERDB_XOR_METRICS=1 go test -run '^TestXORWorkloadMetrics$' -count=3 -v -timeout=20m .
+memory:          go test -run '^TestSealMemoryMeasure$' -count=3 -v -timeout=20m .
+rss:             PAGERDB_RSS_TEST=1 go test -run '^TestViewMapSparseRSS$' -count=3 -v .
+bench-write:     go test -run '^$' -bench '^BenchmarkWrite32Resident$' -benchtime=5000000x -count=3 -timeout=30m .
+bench-evm:       PAGERDB_EVM_RETAIN=32 go test -run '^$' -bench '^BenchmarkEVM$' -benchtime=200x -count=3 -timeout=90m .
+```
+
+Write path before and after: `v2final-macos-write-before.txt` is bench-write at
+0d4b417 with the 60d5083 benchmark file (which stops the timer before the deferred
+Close; earlier bench-write numbers included Close and were too high), and
+`v2final-macos-bench-evm-before.txt` is bench-evm at 0d4b417.
+`v2final-macos-write-profile.txt` holds CPU profiles of the write loop at 0d4b417
+and at 60d5083, with the commands.
+
+`v2final-macos-sustained-interleaved.txt` alternates Sustained and
+WriteCommitUntimedSeal (10000x, one run each, three pairs) at commit 7a733f0 and
+logs any process above 20% CPU sampled every 2 s during each run.
+
+`v2final-index-memory-{before,after}-macos.txt` and
+`v2final-index-memory-rss-macos.txt` compare BenchmarkWindowIndexMemory at
+c77f77c (before) and 7a733f0 (after the index shrink and version pruning); the
+before run copied the benchmark file into a temporary worktree at c77f77c. The
+RSS file reports `/usr/bin/time -l` maximum resident set size for the Retain32
+case.
+
+`v2final-macos-memory-plateau.txt` ran TestSealMemoryMeasure with a temporary
+edit: writes `{8192, 32768, 65536, 131072, 262144}` and `MaxLeaves: 1 << 19`.

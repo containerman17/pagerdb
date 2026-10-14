@@ -51,15 +51,33 @@ across dirty nodes. `Undo(Mark())` restores pending writes. `Rewind(v)` restores
 version within `RetainVersions` (default 4096), including versions in sealed epochs.
 It deletes the replaced sealed suffix and keeps earlier history. A durable rewind
 intent lets Open finish an interrupted rewind. Open views prevent a rewind that
-would invalidate their versions. Whole log chunks stay until their versions leave
-retention and no view needs them. Per-leaf undo references for retained log chunks
-remain in RAM and scale with the retained writes.
+would invalidate their versions. Each Commit prunes the in-memory window index to
+the versions that rewind retention, open views and pending sealing still need. An
+index entry is 16 bytes per log record plus a 12-byte per-leaf link, with no Go
+pointers. Entries and links live in fixed pages of 65536, so appending never copies
+the window and pruning recycles whole pages. The newest link per leaf sits in a
+dense table of 512 KiB pages, one page per 65536 leaves, allocated when a leaf in
+its range is first written. Log chunk files stay until they are sealed, the synced state covers them,
+their versions leave retention and no view needs them. A version that left the
+index before its epoch was sealed returns ErrWindow until sealing finishes.
+
+A **write** stores the old and new bytes in the mapped log, then the new bytes in
+the mapped state. It allocates no Go objects. Each log chunk reserves address space
+for a whole epoch and its file grows in 64 MiB steps, so the mapping moves only
+when one epoch outgrows `EpochBytes` by more than a step. A background goroutine
+touches log pages about 8 MiB ahead of the tail, so first-touch page faults happen
+off the write path.
 
 **Sealing** runs in the background after `EpochVersions` (default 10000) or
-`EpochBytes` (default 1 GiB). It writes compact log references to temporary files,
-partitions contiguous leaf ranges across up to GOMAXPROCS workers, radix-sorts
-fixed 32768-record runs, and performs two-way external merges. Each worker writes
-its section through large buffers. Frames, indexes and roots stream through disk
+`EpochBytes` (default 1 GiB). Rotation clones the state file with the native
+filesystem clone operation, so the sealer reads epoch-end leaves without the
+database lock. Without cloning it reconstructs them from the window index in
+batches of 64 leaves per lock hold. The sealer scans the mapped log once to count
+references per leaf range, partitions contiguous leaf ranges across up to
+GOMAXPROCS workers, and routes 40-byte references into per-worker buffers in one
+pass. A worker whose range fits in one 32768-record run radix-sorts it in memory;
+a larger range rescans the log for its leaves, spills sorted runs to scratch files
+and merges them two ways. Each worker writes its section through large buffers. Frames, indexes and roots stream through disk
 staging into `EpochStore.Put`. Reused sorting and compression buffers bound memory
 per worker independently of epoch size. Scratch disk
 space grows with the epoch. Rotation waits when two epochs are active or queued,
@@ -294,17 +312,19 @@ checkpoint, 56 bytes:
   0 'C', 1..7 padding, 8 version u64, 16 root [32],
   48 CRC-32C of bytes 8..47 u32, 52..55 padding
 entry, 32+2*n bytes:
-  0 'E', 1..3 padding, 4 region u32, 8 n u32, 12 undo CRC-32C u32,
-  16 version u64, 24 state offset u64, 32 old [n], 32+n new [n]
+  0 'E', 1..3 padding, 4 CRC-32C of bytes 8..32+n-1 u32, 8 n u32,
+  12 region u32, 16 version u64, 24 state offset u64, 32 old [n],
+  32+n new [n]
 commit, 56 bytes:
   0 'B', 1..3 padding, 4 entry count u32, 8 version u64,
   16 root [32], 48 CRC-32C u32, 52..55 padding
 ```
 
 CRC-32C uses the Castagnoli polynomial. The entry undo checksum covers bytes
-4..11, 16..31, and the old bytes. The commit checksum covers all complete entry
+8..31 and the old bytes in one pass. The commit checksum covers all complete entry
 bytes since the preceding checkpoint or commit, then commit bytes 4..47. A chunk starts with one checkpoint. Unused tail
-bytes are zero. A tag alone is not a durability barrier.
+bytes are zero. The current chunk's file grows in 64 MiB steps; sealing truncates
+it after the last record. A tag alone is not a durability barrier.
 
 `rewind` is a 32-byte durable intent: `PGREWND2 [8] | target version u64 |
 target epoch u64 | target log end u64`. The log end is immediately after the target
@@ -395,23 +415,24 @@ ubuntu-latest and macos-latest with Go 1.26, then each native parser fuzzer for 
 For longer fuzz runs:
 
 ```
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzLogRecords$' -fuzztime=2m .
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzBlockRecords$' -fuzztime=2m .
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochFrame$' -fuzztime=2m .
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochIndex$' -fuzztime=2m .
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzExportImage$' -fuzztime=2m .
-GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzRewindIntent$' -fuzztime=2m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzLogRecords$' -fuzztime=1m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzBlockRecords$' -fuzztime=1m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochFrame$' -fuzztime=1m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzEpochIndex$' -fuzztime=1m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzExportImage$' -fuzztime=1m .
+GOMAXPROCS=2 go test -run '^$' -fuzz '^FuzzRewindIntent$' -fuzztime=1m .
 ```
 
 ### Benchmark environment and commands
 
-Measured on 2026-10-14 JST with Go 1.26.0. macOS 27.0.1 runs on Apple M3 with
-16384-byte OS pages. Both Ubuntu 24.04 machines use 4096-byte pages and kernel
-7.0.14-orbstack-00380-ga7e0a2dc9535. The amd64 machine uses Rosetta and
-`GODEBUG=asyncpreemptoff=1`; the compiler crashed under translation without that
-setting. These are shared-host measurements with concurrent verification work,
-not isolated hardware comparisons. Every range below contains three runs.
-Raw output and complete platform command prefixes are in [evidence](evidence/commands.md).
+Measured on 2026-10-14 JST with Go 1.26.0 at commit 60d5083. macOS 27.0.1 runs on an
+Apple M3 (16 GB) with 16384-byte OS pages. Linux arm64 is an OrbStack virtual
+machine on the same M3 (Ubuntu 24.04, kernel 7.0.14-orbstack, 4096-byte pages,
+7 CPUs). Linux amd64 under Rosetta ran the correctness suites only; its timings
+measure the translator, not the code. The host was shared: every timed run first
+waited until no other benchmark process used more than 20% CPU. Every range below
+contains three runs. Raw output and complete command prefixes are in
+[evidence](evidence/commands.md).
 
 ```
 go test -run '^$' -bench '^(BenchmarkWrite64|BenchmarkCommit50k|BenchmarkViewReadWindow|BenchmarkViewReadSealed|BenchmarkTreePath|BenchmarkDurabilityLoop|BenchmarkExport)$' -benchtime=1s -count=3 -timeout=30m .
@@ -419,45 +440,99 @@ go test -run '^$' -bench '^BenchmarkTreeColdPath$' -benchtime=100x -count=3 .
 go test -run '^$' -bench '^(BenchmarkOpenVerified|BenchmarkViewMapFirstTouch)$' -benchtime=10x -count=3 .
 ```
 
-The cold-path table uses separate 100x runs on every platform.
-The cold-path test advises away mapping pages; it does not evict the filesystem cache.
+| Measurement | macOS arm64 | Linux arm64 |
+|---|---:|---:|
+| Write64 (64 bytes into one leaf), ns | 146.9-151.0 | 210.1-252.4 |
+| Commit50k (50000 dirty leaves), ms | 12.09-12.38 | 15.18-17.33 |
+| Window read (View.Read inside retention), ns | 171.9-197.8 | 204.3-225.5 |
+| Sealed read (View.Read of a sealed version), us | 1.142-1.178 | 1.262-1.329 |
+| Export, MB/s | 1958-1960 | 1921-1954 |
+| Random heap path, ns | 63.70-68.03 | 83.60-90.53 |
+| Random tiled path, ns | 94.18-95.69 | 108.4-116.4 |
+| Hot heap path, ns | 12.49-12.62 | 29.72-32.50 |
+| Hot tiled path, ns | 19.35-19.43 | 19.47-19.54 |
+| Advised-cold heap path, us | 39.30-41.78 | 720.6-848.1 |
+| Advised-cold tiled path, us | 10.07-12.89 | 218.8-302.7 |
+| 64 writes + commit, us | 34.13-34.96 | 35.02-36.07 |
+| Clean Open, ms | 5.604-5.959 | 2.752-3.556 |
+| Unclean Open, ms | 16.83-18.56 | 21.87-23.85 |
+| DB.Verify, ms | 8.806-9.221 | 6.473-11.75 |
+| View.Map first touch, us | 12.11-17.06 | 14.09-34.08 |
+| View.Map setup, ms | 1.060-1.293 | 0.0467-0.0693 |
 
-| Measurement | macOS arm64 | Linux arm64 | Linux amd64 (Rosetta) |
+DurabilityLoop writes 64 bytes to 64 leaves per commit. OpenVerified has 4 MiB of
+nonzero data and 8 MiB of allocated state; only Open (or Verify) is timed. A clean
+Open trusts the checkpointed root; an unclean Open redoes the log and rehashes the
+state. The cold-path test advises away mapping pages; it does not evict the
+filesystem cache. The first-touch benchmark reads and privately writes one
+untouched OS page at 32 MiB inside a 64 MiB region; map setup is reported
+separately. TestTreeRootMatchesHeap verifies that the tiled and heap layouts give
+identical roots.
+
+Version 1 on the same M3, as measured before this release and not rerun here:
+Write64 207-240 ns, Commit50k 12.4-14.5 ms, window read 175-198 ns, sealed read
+1.45-1.6 us. Version 2 is faster on writes and sealed reads, and equal on commits and
+window reads, while it keeps sealed history on disk instead of in RAM.
+
+### Write path
+
+```
+go test -run '^$' -bench '^BenchmarkWrite32Resident$' -benchtime=5000000x -count=3 .
+PAGERDB_EVM_RETAIN=32 go test -run '^$' -bench '^BenchmarkEVM$' -benchtime=200x -count=3 .
+```
+
+BenchmarkWrite32Resident reads or writes 32 bytes at random 64-byte slots of a
+128 MiB region, with an untimed Commit every 50000 operations. Each random slot
+misses the CPU caches, so these figures are mostly memory latency. Before is
+commit 0d4b417, which checksummed each log entry in three passes.
+
+| Operation, ns | macOS before | macOS after | Linux arm64 after |
 |---|---:|---:|---:|
-| Write64, us | 0.2523-0.4207 | 0.7969-0.9391 | 0.4999-0.5463 |
-| Commit50k, ms | 22.29-29.37 | 37.44-49.12 | 115.1-130.5 |
-| Window read, us | 0.571-0.7129 | 0.4244-0.8696 | 0.4952-0.5097 |
-| Sealed read, us | 13.53-36.43 | 7.318-7.459 | 8.724-9.312 |
-| Export, MB/s | 451.5-483 | 335.2-481.8 | 151.4-153.6 |
-| Hot heap path, ns | 89.36-103.7 | 157.5-201.9 | 224.3-236.9 |
-| Hot tiled path, ns | 279.1-293.1 | 543.5-776.7 | 654.3-720.9 |
-| Advised-cold heap path, us | 48.87-67.79 | 652.5-1017 | 918.8-1208 |
-| Advised-cold tiled path, us | 25.93-31.75 | 258.3-513.2 | 352.7-448.4 |
-| 64 writes + commit, NoSync ms | 0.07554-0.09183 | 0.06183-0.07064 | 0.3657-0.3662 |
-| 64 writes + commit, Sync ms | 204.6-306.3 | 92.06-132.9 | 37.07-52.36 |
-| Verified Open, NoSync ms | 21.69-23.29 | 28.85-50.66 | 41.96-48.96 |
-| Verified Open, Sync ms | 57.98-61.67 | 91.53-152.5 | 89.6-91.73 |
-| View.Map first touch, us | 13.31-24.56 | 17.65-41.5 | 26.62-35.74 |
-| View.Map setup, ms | 1.189-1.633 | 0.05484-0.368 | 0.08926-0.1422 |
+| Write | 120.4-123.1 | 114.9-119.9 | 148.6-158.8 |
+| Read | 38.96-40.86 | 38.42-46.45 | 44.56-54.55 |
+| Read, then write the same slot | 134.8-139.7 | 127.7-129.8 | 162.0-182.6 |
 
-DurabilityLoop writes 64 bytes to 64 leaves per commit. Sync includes a durable
-undo barrier for each write. OpenVerified has 4 MiB of nonzero data and 8 MiB of
-allocated state; only Open is timed, with Close excluded. Map setup and first-touch
-cost are separate. The first-touch benchmark reads and privately writes one untouched OS page at
-32 MiB inside a 64 MiB region.
+BenchmarkEVM executes 200 blocks of 50000 read-increment-write operations on
+32-byte values in 2,000,000 slots of 64 bytes (128 MiB), with RetainVersions 32.
+Slots are uniform or normally distributed around a hot spot (sigma in slots).
+Write and commit times are per block.
 
-The focused tree-only comparison used
-`go test -run '^$' -bench '^BenchmarkCommit50k$' -benchtime=1x -count=3`:
-heap layout 41.23-49.81 ms, tiled layout 33.79-40.17 ms. Its advised-cold path
-comparison (`-bench '^BenchmarkTreeColdPath$' -benchtime=100x -count=3`) was
-69.93-102.67 us versus 25.24-27.66 us. These early layout-only results precede
-the final durability and format changes. Tiling costs extra hot address arithmetic,
-but reduces cold mapping-page touches. TestTreeRootMatchesHeap verifies identical roots.
+| Measurement | uniform | sigma 20000 | sigma 2000 |
+|---|---:|---:|---:|
+| macOS writes/s, millions | 1.753-1.841 | 3.420-3.665 | 3.811-3.989 |
+| macOS p50 write, ms | 6.800-7.100 | 2.760-2.774 | 2.274-2.284 |
+| macOS p99 write, ms | 7.499-8.205 | 3.307-3.405 | 2.402-2.469 |
+| macOS p50 commit, ms | 6.797-6.858 | 1.423-1.433 | 0.6669-0.6713 |
+| macOS p99 commit, ms | 8.904-9.094 | 1.712-1.806 | 0.7405-0.7517 |
+| macOS before, p50 write, ms | 7.207-7.309 | 3.258-3.330 | 2.749-2.762 |
+| Linux arm64 writes/s, millions | 1.590-1.683 | 2.744-2.927 | 2.948-3.441 |
+| Linux arm64 p50 write, ms | 8.534-8.685 | 2.977-3.127 | 2.388-2.486 |
+| Linux arm64 p99 write, ms | 10.87-32.70 | 7.369-10.94 | 5.353-6.676 |
+| Linux arm64 p50 commit, ms | 7.603-7.952 | 2.234-2.275 | 0.8999-0.9563 |
+| Dirty leaves per block | 41214 | 6358 | 836 |
 
-The v1 RAM-index sealed-read baseline was 5.895-7.362 us for three 200ms runs
-(`-bench '^BenchmarkViewReadSealed$' -benchtime=200ms -count=3`); a quiet single
-run was 2.435 us. The final disk-index results above are slower. Bounded index RAM
-and backward reconstruction have a measurable read cost; this is not a latency win.
+At sigma 2000 a block of writes takes 2.27 ms on macOS, about 45 ns per
+read-increment-write including the benchmark's random sampling. The uniform case
+is bound by cache and TLB misses on random state lines. A write allocates no Go
+objects of its own; index pages of 65536 entries are allocated or recycled as the
+window moves. Writes are serial by design: one goroutine owns mutations, and only
+Commit hashing and sealing use more cores. Process RSS was 1.30-1.43 GB on both
+platforms, mostly the mapped state, log and tree.
+
+### Window index memory
+
+```
+go test -run '^$' -bench '^BenchmarkWindowIndexMemory$' -benchtime=1x -count=3 .
+```
+
+The benchmark commits blocks of 20000 random 32-byte writes into a 64 MiB region
+and reports Go heap per retained write after a forced GC; log bytes live in mapped
+files and are not counted. With the default RetainVersions 4096, 100 blocks all
+stay in the window: 27.83-27.90 bytes per write (55.7 MB). With RetainVersions 32,
+300 blocks run inside one epoch and the window keeps 32: 32.54-32.56 bytes per
+write (20.8 MB). Both platforms match. At commit c77f77c the index cost 81.3 and
+81.9 bytes per write, and RetainVersions 32 still held 300 blocks (491.5 MB) because
+pruning followed log chunks instead of versions.
 
 ### Backward XOR compression and reads
 
@@ -469,80 +544,106 @@ go test -run '^$' -bench '^BenchmarkXORSealedRead$' -benchtime=100x -count=3 .
 Each workload has 160016 application writes over 16 leaves and 10001 versions,
 with 1616 frames. The EVM-shaped workload uses two adjacent 32-byte uint256 values
 with leading zeros, balance-like increments and counters. Random uses 64 random
-bytes per write. All three platforms produced the same byte counts in all three runs.
-The real application trace was not needed for this synthetic shape test.
+bytes per write. Both platforms produced the same byte counts in all three runs.
 
 | Workload | Before trim, raw B/record | After trim, raw B/record | Before trim, zstd policy B/record | After trim, zstd policy B/record | Frames compressed | Whole epoch B/application record |
 |---|---:|---:|---:|---:|---:|---:|
-| EVM-shaped | 72.3232 | 41.3567 | 4.0365 | 3.9545 | 100% | 15.3710 |
-| Random | 72.3232 | 72.3151 | 72.3232 | 72.3151 | 0% | 83.7315 |
+| EVM-shaped | 72.3232 | 41.3567 | 4.0365 | 3.9987 | 100% | 15.6676 |
+| Random | 72.3232 | 72.3151 | 72.3232 | 70.7029 | 32.67% | 82.3718 |
 
 Frame figures include frame headers. Whole-epoch figures also include dense rows,
 frame directories, cumulative indexes, roots and allocator metadata. Compression
-is kept only when it saves at least 10%. Range-read cost includes index lookup and
-decoding. The following direct sealed-reader measurements prevent near-head ages
-from selecting the live-log path; public View.Read is checked separately against
-captured expected bytes.
+is kept per frame only when it saves at least 10%. The direct sealed-reader
+benchmark reads 64 bytes and bypasses the live log, so near-head ages still decode
+sealed history; public View.Read is checked separately against captured bytes.
+EVM and Random seal every 100 versions, so 10000 versions back crosses 100 epochs;
+the Epoch10000 variants use the default epoch length.
 
-| Measurement | macOS arm64 | Linux arm64 | Linux amd64 (Rosetta) |
-|---|---:|---:|---:|
-| EVM, 1 versions back, us | 1.288-1.492 | 0.73-0.8421 | 1.114-1.189 |
-| EVM, 100 versions back, us | 11.47-12.07 | 9.567-10.3 | 11.89-13.7 |
-| EVM, 10000 versions back, us | 1545-1634 | 1087-1380 | 1218-1232 |
-| Random, 1 versions back, us | 0.8196-0.9288 | 0.5504-0.6079 | 0.7442-0.8292 |
-| Random, 100 versions back, us | 6.091-6.556 | 5.432-6.586 | 10.24-10.95 |
-| Random, 10000 versions back, us | 1631-1781 | 760.5-933.1 | 1081-1244 |
+| Read, us | macOS arm64 | Linux arm64 |
+|---|---:|---:|
+| EVM, 1 version back | 0.4154-0.4621 | 0.4858-0.5546 |
+| EVM, 100 versions back | 9.135-9.405 | 9.440-9.528 |
+| EVM, 10000 versions back | 35.09-35.51 | 35.95-36.49 |
+| Random, 1 version back | 0.2367-0.4092 | 0.2471-0.2892 |
+| Random, 100 versions back | 3.730-4.381 | 3.760-3.907 |
+| Random, 10000 versions back | 15.70-16.85 | 15.45-15.60 |
+| EVM, 10000-version epochs, 1 back | 0.4233-0.4508 | 0.4279-0.5833 |
+| EVM, 10000-version epochs, 100 back | 19.16-20.00 | 19.17-21.40 |
+| EVM, 10000-version epochs, 10000 back | 20.39-20.72 | 20.17-20.93 |
+| Random, 10000-version epochs, 1 back | 0.2371-0.2750 | 0.2467-0.2721 |
+| Random, 10000-version epochs, 100 back | 9.969-10.80 | 9.932-11.59 |
+| Random, 10000-version epochs, 10000 back | 8.035-8.305 | 8.182-8.627 |
+
+A deep read is bounded by its base copies, not by its age. Each leaf gets a base
+copy whenever about 16 KiB of history has accumulated since the last one, so a
+read takes at most a few base hops (two index lookups each), then walks at most
+the changed epochs since that copy with one O(log leaves) index lookup per epoch,
+and decodes at most 16 KiB plus two frames. The EVM read 10000 versions back walks
+up to 100 changed epochs and stays near 36 us.
 
 ### Sustained writes with background sealing
 
-`go test -run '^$' -bench '^BenchmarkSustained$' -benchtime=10000x -count=3 -timeout=45m .`
-writes 64 bytes into 2400 leaves per block, for 10000 blocks per run. Sealing runs
-every 100 versions. Throughput includes draining the sealer; commit percentiles
-exclude writes and final drain, but include rotation backpressure. The combined
-active and queued epoch count is limited to two for new history.
+```
+go test -run '^$' -bench '^(BenchmarkSustained|BenchmarkWriteCommitUntimedSeal|BenchmarkWriteCommitOnly)$' -benchtime=10000x -count=3 -timeout=60m .
+```
 
-| Measurement | macOS arm64 | Linux arm64 | Linux amd64 (Rosetta) |
-|---|---:|---:|---:|
-| Sustained blocks/s | 105.5-180.9 | 80.18-151.9 | 44.08-84.33 |
-| Commit p50, ms | 0.6723-0.8139 | 1.271-1.528 | 7.288-9.595 |
-| Commit p99, ms | 9.71-13.76 | 9.212-19.46 | 18.77-35.42 |
+Each block writes 64 bytes into each of 2400 leaves, so 2400 leaves of 1 KiB are
+dirty, then commits; a run is 10000 blocks. Sustained seals every 100 versions in the background and includes the final
+drain. WriteCommitUntimedSeal runs the same loop and excludes the time Seal takes
+from its blocks/s, so it is the write and commit cost with sealing removed.
+WriteCommitOnly never seals, so its single log chunk grows to about 3.8 GB. Its
+macOS runs varied threefold, so it is not a fair baseline there.
+
+| Measurement | macOS arm64 | Linux arm64 |
+|---|---:|---:|
+| Sustained, blocks/s | 1635-1717 | 851.3-919.8 |
+| Write and commit without sealing, blocks/s | 2129-2204 | 1084-1152 |
+| Write and commit, never sealing, blocks/s | 347.6-1039 | 1076-1152 |
+| Sustained commit p50, ms | 0.3628-0.3764 | 0.7364-0.7624 |
+| Sustained commit p99, ms | 2.029-2.197 | 4.240-4.538 |
+| Backpressure events per run | 0 | 0-1 |
+| Final drain, ms | 94.52-101.6 | 45.43-153.2 |
+
+Sustained throughput is 74-81% of write and commit without sealing on macOS and
+74-85% on Linux arm64. The gap is CPU shared with the sealer: write and commit
+times rise while it runs. Rotation waited for the sealer once in three Linux runs.
 
 ### Memory and sparse mappings
 
 `go test -run '^TestSealMemoryMeasure$' -count=3 -v` samples extra Go heap every
-millisecond around sealing. It excludes preexisting live-log indexes, mapped log
-bytes, and OS page cache. Fixed external-sort and frame buffers bound live payload
-memory; scratch disk grows with the epoch. Peak heap also includes uncollected
-runtime garbage. Broad-leaf memory stays near 2.6-2.7 MB when input grows eightfold.
-Same-leaf workloads activate larger zstd tables. Raw outputs are in
-`evidence/xor-{macos,linux-arm64,linux-amd64}-memory-final.txt`.
+millisecond around sealing. It excludes the live window index, mapped log bytes,
+and OS page cache. Sealing memory depends on the number of workers, not on the
+epoch size: each of up to GOMAXPROCS workers keeps about 5.4 MB of sort, frame and
+compression buffers.
 
-| Measurement | macOS arm64 | Linux arm64 | Linux amd64 (Rosetta) |
-|---|---:|---:|---:|
-| Broad 1 MiB peak extra heap, B | 2721936-2724488 | 2588880-2592400 | 2589704-2590480 |
-| Broad 8 MiB peak extra heap, B | 2723832-2723944 | 2600472-2600848 | 2590312-2600792 |
-| Broad 1 MiB total allocation, B | 2723704-2724504 | 2592392-2600936 | 2592616-2601080 |
-| Broad 8 MiB total allocation, B | 2723872-2723968 | 2600560-2600904 | 2600792-2600936 |
-| Same-leaf 1 MiB peak extra heap, B | 10184640-10827512 | 10826968-11104840 | 10827032-10835960 |
-| Same-leaf 8 MiB peak extra heap, B | 10829088-10829664 | 10828912-11189008 | 10632224-10828912 |
+| Peak extra heap during Seal, MB | macOS arm64 (8 workers) | Linux arm64 (7 workers) |
+|---|---:|---:|
+| Same leaf, 1 MiB of writes | 5.74-6.74 | 6.63-6.66 |
+| Same leaf, 8 MiB of writes | 7.24-7.28 | 5.73-7.19 |
+| Broad leaves, 1 MiB of writes | 12.21 | 11.78-12.04 |
+| Broad leaves, 8 MiB of writes | 43.28-43.29 | 35.87-37.59 |
+
+A separate macOS run with 8192 to 262144 broad writes (`v2final-macos-memory-plateau.txt`)
+stayed at 43.3-44.7 MB from 32768 writes up, and same-leaf runs at 5.9-7.3 MB.
 
 `PAGERDB_RSS_TEST=1 go test -run '^TestViewMapSparseRSS$' -count=3 -v` maps a
-4 GiB region and touches 16 OS pages. RSS increases were 294912-376832 bytes on
-macOS, 106496-319488 on Linux arm64, and 225280-405504 on Linux amd64. The Linux
-machines used native userfaultfd with vm.unprivileged_userfaultfd=1.
+4 GiB region and touches 16 OS pages. RSS increases were 294912-425984 bytes on
+macOS and 90112-356352 bytes on Linux arm64. The Linux machine used native
+userfaultfd with vm.unprivileged_userfaultfd=1.
 
 ### Parser verification
 
-All six two-minute fuzz runs passed. The final corpus totals, including cached
-interesting inputs, were: log 27 (4507533 executions), block 26 (4453766), XOR frame
-297 (7268360), XOR index 19 (10305021), export image 12 (5049573), and rewind intent
-5 (7256424). Valid and malformed seed files are committed under testdata/fuzz;
-these totals are not counts of committed seed files. The XOR seed set includes a
-compressed frame with a closing leaf copy and a complete dense index.
+All six one-minute fuzz runs on macOS passed at commit 60d5083. Executions and final
+corpus totals, including cached interesting inputs: log 5332430 (31), block 5302721
+(28), XOR frame 4565106 (705), XOR index 5781358 (42), export image 5406534 (14),
+rewind intent 5350027 (5). Valid and malformed seed files are committed under
+testdata/fuzz. The XOR seed set includes a compressed frame with a closing leaf copy
+and a complete dense index.
 
-The full suites include crafted lost/torn-log states, kill -9 recovery, rewind
-across sealed epochs, export/import, mapped reads, concurrent GC and kernel I/O.
-Physical hardware power-cut testing and hosted GitHub Actions execution are
+The full suites passed on macOS arm64, Linux arm64 and Linux amd64 (Rosetta): go vet,
+go test and go test -race. They include crafted lost and torn log states, kill -9
+recovery, rewind across sealed epochs, export and import, mapped reads, concurrent GC
+and kernel I/O. Physical power-cut testing and hosted GitHub Actions execution are
 UNVERIFIED. CI is configured but was not published or run remotely.
 
 ## Limits
@@ -552,6 +653,11 @@ UNVERIFIED. CI is configured but was not published or run remotely.
 - Cumulative sealed indexes trade extra disk space for logarithmic lookup per changed epoch.
 - Commits are not durable when Commit returns. A crash can lose recent blocks or, if a state page reached disk before its log page, make Open fail; the caller then restores or re-executes.
 - An unclean Open redoes every kept log chunk, so its cost also grows with the retained log.
+- Versions older than RetainVersions in an epoch that is not sealed yet return ErrWindow until the sealer finishes that epoch. Rotation writes the mapped state back (msync without fsync) once per epoch so the clone sees it.
+- The window index holds at most 2^32 log records and log chunks up to 1 TiB; larger windows panic and need a smaller RetainVersions or EpochBytes.
+- Writes are serial. One goroutine owns mutations and every Write takes the database mutex; only Commit hashing and sealing use several cores. Random writes over a state larger than the CPU caches cost about 115-160 ns each on the measured M3.
+- Sealing holds about 5.4 MB of buffers per worker, up to GOMAXPROCS workers, independent of epoch size.
+- Each live log chunk reserves address space for one epoch plus 64 MiB (at most 4 GiB plus 64 MiB); the file itself grows in 64 MiB steps.
 - An unclean Open and DB.Verify hash the whole allocated state, so their cost grows with state size. A clean Open checksums only the retained log chunks.
 - Without filesystem cloning, private mapping setup copies sparse file extents.
 - Linux userfaultfd needs cgo and a native fault thread. Map setup reconstructs changed historical leaves into a snapshot file. A Go fault handler cannot safely serve arbitrary Go slice access during garbage collection.

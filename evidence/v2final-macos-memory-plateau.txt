@@ -1,0 +1,12 @@
+== 2026-10-14 15:52 JST TestSealMemoryMeasure with writes {8192,32768,65536,131072,262144} and MaxLeaves 1<<19 (temporary edit, see commands.md)
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6755232 allocated=7090784 elapsed=18.368709ms
+    epoch_v2_test.go:156: broad=false writes=32768 log_payload=4194304 peak_extra_heap=6747728 allocated=7280048 elapsed=31.358583ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=5931576 allocated=7281824 elapsed=35.40875ms
+    epoch_v2_test.go:156: broad=false writes=131072 log_payload=16777216 peak_extra_heap=7310128 allocated=7312448 elapsed=50.94125ms
+    epoch_v2_test.go:156: broad=false writes=262144 log_payload=33554432 peak_extra_heap=7311440 allocated=7313536 elapsed=94.813791ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12208568 allocated=12279224 elapsed=33.432916ms
+    epoch_v2_test.go:156: broad=true writes=32768 log_payload=4194304 peak_extra_heap=43267384 allocated=43605760 elapsed=63.807708ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=43281952 allocated=43620056 elapsed=107.867166ms
+    epoch_v2_test.go:156: broad=true writes=131072 log_payload=16777216 peak_extra_heap=43341552 allocated=43684336 elapsed=266.051458ms
+    epoch_v2_test.go:156: broad=true writes=262144 log_payload=33554432 peak_extra_heap=44702544 allocated=44772424 elapsed=381.514208ms
+ok  	github.com/containerman17/pagerdb	1.938s

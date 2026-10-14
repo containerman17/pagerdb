@@ -1,0 +1,13 @@
+== code 60d5083 2026-10-14 17:47 JST go test -run ^$ -bench ^BenchmarkSealEpoch$ -count=3 -timeout=30m .
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkSealEpoch/Cold-8         	      27	  39415082 ns/op	        39.41 epoch-ms	   6089102 records/s
+BenchmarkSealEpoch/Cold-8         	      31	  40332155 ns/op	        40.33 epoch-ms	   5950644 records/s
+BenchmarkSealEpoch/Cold-8         	      31	  40679466 ns/op	        40.68 epoch-ms	   5899839 records/s
+BenchmarkSealEpoch/Warm-8         	      32	  38743083 ns/op	        38.74 epoch-ms	   6194713 records/s
+BenchmarkSealEpoch/Warm-8         	      34	  36574385 ns/op	        36.57 epoch-ms	   6562034 records/s
+BenchmarkSealEpoch/Warm-8         	      32	  36289095 ns/op	        36.29 epoch-ms	   6613622 records/s
+PASS
+ok  	github.com/containerman17/pagerdb	29.209s

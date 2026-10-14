@@ -1,0 +1,21 @@
+== code 60d5083 2026-10-14 17:50 JST go test -run ^TestSealMemoryMeasure$ -count=3 -v -timeout=20m .
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=5740536 allocated=7090512 elapsed=19.616625ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=7277392 allocated=7279720 elapsed=36.81425ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12207336 allocated=12279712 elapsed=42.831167ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=43277952 allocated=43618112 elapsed=141.255959ms
+--- PASS: TestSealMemoryMeasure (0.44s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6743504 allocated=7081720 elapsed=18.178083ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=7241472 allocated=7280376 elapsed=35.84575ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12206048 allocated=12279672 elapsed=40.789292ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=43290672 allocated=43627032 elapsed=160.016209ms
+--- PASS: TestSealMemoryMeasure (0.45s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:156: broad=false writes=8192 log_payload=1048576 peak_extra_heap=6743664 allocated=7081152 elapsed=20.208708ms
+    epoch_v2_test.go:156: broad=false writes=65536 log_payload=8388608 peak_extra_heap=7241272 allocated=7280848 elapsed=36.758042ms
+    epoch_v2_test.go:156: broad=true writes=8192 log_payload=1048576 peak_extra_heap=12206360 allocated=12280120 elapsed=42.966542ms
+    epoch_v2_test.go:156: broad=true writes=65536 log_payload=8388608 peak_extra_heap=43283200 allocated=43623592 elapsed=156.954083ms
+--- PASS: TestSealMemoryMeasure (0.46s)
+PASS
+ok  	github.com/containerman17/pagerdb	1.450s

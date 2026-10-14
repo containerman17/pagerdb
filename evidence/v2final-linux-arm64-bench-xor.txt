@@ -1,0 +1,42 @@
+== code 60d5083 2026-10-14 17:53 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^BenchmarkXORSealedRead$ -benchtime=100x -count=3 -timeout=30m .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       485.8 ns/op
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       503.8 ns/op
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       554.6 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	      9528 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	      9505 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	      9440 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	     36493 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	     36203 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	     35946 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       289.2 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       249.2 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       247.1 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      3820 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      3760 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      3907 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	     15516 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	     15596 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	     15449 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back1-7   	     100	       481.7 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back1-7   	     100	       583.3 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back1-7   	     100	       427.9 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back100-7 	     100	     21396 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back100-7 	     100	     19749 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back100-7 	     100	     19170 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back10000-7         	     100	     20870 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back10000-7         	     100	     20169 ns/op
+BenchmarkXORSealedRead/EVMEpoch10000/Back10000-7         	     100	     20930 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back1-7          	     100	       272.1 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back1-7          	     100	       250.8 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back1-7          	     100	       246.7 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back100-7        	     100	     11592 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back100-7        	     100	     10315 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back100-7        	     100	      9932 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back10000-7      	     100	      8627 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back10000-7      	     100	      8182 ns/op
+BenchmarkXORSealedRead/RandomEpoch10000/Back10000-7      	     100	      8275 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	2.667s

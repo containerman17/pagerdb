@@ -1,0 +1,9 @@
+== code 60d5083
+== 2026-10-14 17:39 JST go vet ./...
+== exit 0
+== 2026-10-14 17:39 JST go test -count=1 -timeout=40m ./...
+ok  	github.com/containerman17/pagerdb	20.120s
+== exit 0
+== 2026-10-14 17:39 JST go test -race -count=1 -timeout=60m ./...
+ok  	github.com/containerman17/pagerdb	57.920s
+== exit 0

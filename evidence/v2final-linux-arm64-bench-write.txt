@@ -1,0 +1,15 @@
+== code 60d5083 2026-10-14 17:56 JST .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^$ -bench ^BenchmarkWrite32Resident$ -benchtime=5000000x -count=3 -timeout=30m .
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkWrite32Resident/Write-7         	 5000000	       151.9 ns/op	 210.69 MB/s
+BenchmarkWrite32Resident/Write-7         	 5000000	       158.8 ns/op	 201.52 MB/s
+BenchmarkWrite32Resident/Write-7         	 5000000	       148.6 ns/op	 215.28 MB/s
+BenchmarkWrite32Resident/Read-7          	 5000000	        54.55 ns/op	 586.59 MB/s
+BenchmarkWrite32Resident/Read-7          	 5000000	        45.52 ns/op	 702.92 MB/s
+BenchmarkWrite32Resident/Read-7          	 5000000	        44.56 ns/op	 718.15 MB/s
+BenchmarkWrite32Resident/ReadWrite-7     	 5000000	       162.0 ns/op	 197.56 MB/s
+BenchmarkWrite32Resident/ReadWrite-7     	 5000000	       163.1 ns/op	 196.17 MB/s
+BenchmarkWrite32Resident/ReadWrite-7     	 5000000	       182.6 ns/op	 175.26 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	23.648s

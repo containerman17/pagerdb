@@ -1,0 +1,12 @@
+== code 60d5083 2026-10-14 17:56 JST env PAGERDB_RSS_TEST=1 .scratch/la.sh /Users/ilia/pagerdb/.scratch/linux-arm64/go/bin/go test -run ^TestViewMapSparseRSS$ -count=3 -v .
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:284: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 18726912 after 19083264 delta 356352 bytes
+--- PASS: TestViewMapSparseRSS (0.05s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:284: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 20889600 after 21082112 delta 192512 bytes
+--- PASS: TestViewMapSparseRSS (0.03s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:284: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 23564288 after 23654400 delta 90112 bytes
+--- PASS: TestViewMapSparseRSS (0.03s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.114s
