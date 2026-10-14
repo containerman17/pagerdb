@@ -1,0 +1,16 @@
+BenchmarkSustained-8   	   10000	    761021 ns/op	         0.4709 avg-commit-ms	         0.0000516 avg-loop-other-ms	         0.2838 avg-write-ms	         0 backpressure-events	      1314 blocks/s	        62.78 drain-ms	         0.3655 p50-commit-ms	         1.903 p99-commit-ms
+contention-samples  15:19 JST
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    571201 ns/op	         0.3524 avg-commit-ms	         0.0000364 avg-loop-other-ms	         0.2188 avg-write-ms	         0 backpressure-events	      1751 blocks/s	         0 drain-ms	      3675 excluded-seal-ms	         0.3505 p50-commit-ms	         0.5055 p99-commit-ms	      1065 wall-blocks/s
+contention-samples contention  29.4 /sbin/launchd; 15:19 JST
+BenchmarkSustained-8   	   10000	    770145 ns/op	         0.4855 avg-commit-ms	         0.0000549 avg-loop-other-ms	         0.2785 avg-write-ms	         0 backpressure-events	      1298 blocks/s	        60.66 drain-ms	         0.3685 p50-commit-ms	         1.923 p99-commit-ms
+contention-samples  15:20 JST
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    605241 ns/op	         0.3690 avg-commit-ms	         0.0000399 avg-loop-other-ms	         0.2362 avg-write-ms	         0 backpressure-events	      1652 blocks/s	         0 drain-ms	      3709 excluded-seal-ms	         0.3580 p50-commit-ms	         0.6241 p99-commit-ms	      1024 wall-blocks/s
+contention-samples contention  99.0 /Users/ilia/Library/Caches/go-build/d1/d18bb344a18d61f51dfff874e91806735786a9e58999de69cb96b53a30ebe9aa-d/main; 15:20 JST
+BenchmarkSustained-8   	   10000	    899667 ns/op	         0.5919 avg-commit-ms	         0.0000605 avg-loop-other-ms	         0.2925 avg-write-ms	         1.000 backpressure-events	      1112 blocks/s	       151.6 drain-ms	         0.3835 p50-commit-ms	         1.997 p99-commit-ms
+contention-samples contention  39.5 /sbin/launchd; 15:20 JST
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    614982 ns/op	         0.3691 avg-commit-ms	         0.0000378 avg-loop-other-ms	         0.2458 avg-write-ms	         0 backpressure-events	      1626 blocks/s	         0 drain-ms	      4374 excluded-seal-ms	         0.3569 p50-commit-ms	         0.5702 p99-commit-ms	       950.2 wall-blocks/s
+contention-samples contention  95.7 /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/155.0.8059.40/Helpers/Google Chrome Helper (Renderer).app/Contents/MacOS/Google Chrome Helper (Renderer); 15:20 JST
+BenchmarkSustained-8   	   10000	    764789 ns/op	         0.4962 avg-commit-ms	         0.0000595 avg-loop-other-ms	         0.2624 avg-write-ms	         0 backpressure-events	      1308 blocks/s	        61.04 drain-ms	         0.3749 p50-commit-ms	         1.936 p99-commit-ms
+contention-samples  15:20 JST
+BenchmarkWriteCommitUntimedSeal-8   	   10000	    631249 ns/op	         0.3756 avg-commit-ms	         0.0000432 avg-loop-other-ms	         0.2556 avg-write-ms	         0 backpressure-events	      1584 blocks/s	         0 drain-ms	      4760 excluded-seal-ms	         0.3569 p50-commit-ms	         0.6272 p99-commit-ms	       903.1 wall-blocks/s
+contention-samples contention  23.4 /sbin/launchd; 15:20 JST

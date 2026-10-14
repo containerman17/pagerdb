@@ -3,6 +3,7 @@ package pagerdb
 import (
 	"io"
 	"math"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -440,5 +441,45 @@ func BenchmarkSealEpoch(b *testing.B) {
 			b.ReportMetric(float64(b.N)*leaves*versions/elapsed.Seconds(), "records/s")
 			b.ReportMetric(float64(elapsed)/float64(b.N)/1e6, "epoch-ms")
 		})
+	}
+}
+
+// BenchmarkWindowIndexMemory reports the Go heap that the rewind window index
+// holds per retained write: 32-byte writes at random offsets, one leaf each.
+// Log bytes live in mapped files and are not counted.
+func BenchmarkWindowIndexMemory(b *testing.B) {
+	const blocks, writes = 100, 20000
+	for range b.N {
+		db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 17, EpochVersions: 1000})
+		if err != nil {
+			b.Fatal(err)
+		}
+		r, err := db.Alloc(64 << 20)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if _, _, err = db.Commit(); err != nil {
+			b.Fatal(err)
+		}
+		rng := rand.New(rand.NewPCG(5, 6))
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		var value [32]byte
+		for range blocks {
+			for range writes {
+				le.PutUint64(value[:], rng.Uint64())
+				db.Write(r, rng.IntN(64<<20/32)*32, value[:])
+			}
+			if _, _, err = db.Commit(); err != nil {
+				b.Fatal(err)
+			}
+		}
+		runtime.GC()
+		runtime.ReadMemStats(&after)
+		b.ReportMetric(float64(after.HeapAlloc-before.HeapAlloc)/(blocks*writes), "heap-B/write")
+		if err = db.Close(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
