@@ -44,7 +44,7 @@ func (vw *View) Map(r Region) ([]byte, error) {
 	return m.data, nil
 }
 func (vw *View) privateMap(l loc) (*viewMapping, error) {
-	file, err := snapshotState(vw.db)
+	file, err := vw.snapshotView(l)
 	if err != nil {
 		return nil, err
 	}
@@ -76,6 +76,22 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 			}
 		}
 	}
+	return m, nil
+}
+
+// snapshotView prepares immutable backing bytes before exposing any mapping.
+// Historical patches use one leaf buffer; fault handlers never call into Go.
+func (vw *View) snapshotView(l loc) (*os.File, error) {
+	file, err := snapshotState(vw.db)
+	if err != nil {
+		return nil, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			file.Close()
+		}
+	}()
 	// Only leaves changed after the requested version need an eager copy.
 	changed := make(map[uint64]struct{})
 	segments := make(map[uint64]bool, len(l.segs))
@@ -107,29 +123,26 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 	for _, s := range sealed {
 		if s.end > vw.v {
 			if err := s.eachChangedLeaf(func(leaf uint64) error { addChanged(leaf); return nil }); err != nil {
-				unix.Munmap(m.memory)
 				return nil, err
 			}
 		}
 	}
-	var readErr error
-	l.each(0, l.size, func(fo, pos, n uint64) {
-		for p := uint64(0); p < n; {
-			count := min(n-p, LeafSize-(fo+p)%LeafSize)
-			if _, ok := changed[(fo+p)/LeafSize]; ok {
-				if err := vw.readFile(fo+p, m.data[pos+p:pos+p+count]); err != nil {
-					readErr = err
-					return
-				}
-			}
-			p += count
+	var leaf [LeafSize]byte
+	for index := range changed {
+		off := index * LeafSize
+		if err := vw.readFile(off, leaf[:]); err != nil {
+			return nil, err
 		}
-	})
-	if readErr != nil {
-		unix.Munmap(m.memory)
-		return nil, readErr
+		n, err := file.WriteAt(leaf[:], int64(off))
+		if err != nil {
+			return nil, err
+		}
+		if n != LeafSize {
+			return nil, io.ErrShortWrite
+		}
 	}
-	return m, nil
+	ok = true
+	return file, nil
 }
 
 // sparseSnapshot is the fallback when filesystem cloning is unavailable.

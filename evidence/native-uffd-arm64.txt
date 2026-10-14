@@ -1,0 +1,28 @@
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:189: set PAGERDB_RSS_TEST=1 for 4 GiB sparse mapping measurement
+--- SKIP: TestViewMapSparseRSS (0.00s)
+=== RUN   TestCommitVersionLimit
+--- PASS: TestCommitVersionLimit (0.07s)
+=== RUN   TestUserfaultfdConcurrentGC
+    viewmap_gc_linux_test.go:34: === RUN   TestUserfaultfdConcurrentGC
+            viewmap_gc_linux_test.go:131: native userfaultfd resolved four 8 MiB mappings during 1 GCs, page size 4096
+        --- PASS: TestUserfaultfdConcurrentGC (0.08s)
+        PASS
+        
+--- PASS: TestUserfaultfdConcurrentGC (1.09s)
+=== RUN   TestUserfaultfdKernelIO
+    viewmap_gc_linux_test.go:147: === RUN   TestUserfaultfdKernelIO
+            viewmap_gc_linux_test.go:208: kernel-originated userfaultfd reads and writes passed, page size 4096
+        --- PASS: TestUserfaultfdKernelIO (0.02s)
+        PASS
+        
+--- PASS: TestUserfaultfdKernelIO (1.03s)
+=== RUN   TestUserfaultfd
+    viewmap_linux_test.go:50: userfaultfd active; OS page size 4096
+--- PASS: TestUserfaultfd (0.02s)
+=== RUN   TestViewMap
+--- PASS: TestViewMap (0.07s)
+=== RUN   TestParallelViewMaps
+--- PASS: TestParallelViewMaps (0.01s)
+PASS
+ok  	github.com/containerman17/pagerdb	3.312s

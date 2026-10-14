@@ -15,7 +15,7 @@ func snapshotState(db *DB) (*os.File, error) {
 	defer os.RemoveAll(dir)
 	path := filepath.Join(dir, "state")
 	if err = unix.Clonefile(db.stateF.Name(), path, 0); err == nil {
-		return os.Open(path)
+		return os.OpenFile(path, os.O_RDWR, 0)
 	}
 	f, err := os.Create(path)
 	if err != nil {
