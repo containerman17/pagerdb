@@ -29,7 +29,19 @@ func (db *DB) setHdr(off, v uint64) {
 	db.put(0, off, b[:])
 }
 
-func (db *DB) regionOff(r Region) uint64 { return db.regTab + uint64(r)*16 }
+const regionsPerSegment = SegSize / 16
+
+func regionEntryOff(rd func(uint64) uint64, regTab uint64, r Region) uint64 {
+	s := rd(regTab + uint64(r)/regionsPerSegment*8)
+	if s == 0 {
+		return 0
+	}
+	return s*SegSize + uint64(r)%regionsPerSegment*16
+}
+
+func (db *DB) regionOff(r Region) uint64 {
+	return regionEntryOff(db.headU64, db.regTab, r)
+}
 
 func (db *DB) setRegion(r Region, kind, n uint32, where uint64) {
 	var b [16]byte
@@ -50,8 +62,12 @@ func locate(rd func(off uint64) uint64, regTab, maxRegions uint64, r Region) (lo
 	if r == 0 || uint64(r) >= maxRegions {
 		return loc{}, ErrRegion
 	}
-	w0 := rd(regTab + uint64(r)*16)
-	kind, n, where := uint32(w0), uint32(w0>>32), rd(regTab+uint64(r)*16+8)
+	off := regionEntryOff(rd, regTab, r)
+	if off == 0 {
+		return loc{}, ErrRegion
+	}
+	w0 := rd(off)
+	kind, n, where := uint32(w0), uint32(w0>>32), rd(off+8)
 	switch {
 	case kind >= 1 && kind <= nClasses:
 		return loc{size: classSize(kind), off: where}, nil
@@ -159,6 +175,7 @@ func (db *DB) allocSlot(c uint32) (uint64, error) {
 	if off := db.hdr(h); off != 0 {
 		db.setHdr(h, db.hdr(off))
 		db.put(0, off, zeros[:8])
+		db.setHdr(hNext+off/SegSize*8, db.hdr(hNext+off/SegSize*8)+1)
 		return off, nil
 	}
 	off := db.hdr(h + 8)
@@ -174,12 +191,12 @@ func (db *DB) allocSlot(c uint32) (uint64, error) {
 		next = 0
 	}
 	db.setHdr(h+8, next)
+	db.setHdr(hNext+off/SegSize*8, db.hdr(hNext+off/SegSize*8)+1)
 	return off, nil
 }
 
 // freeSlot zeroes a slot and links it into its class free list (link in its first 8 bytes).
-// shortcut: segments carved for a small class never return to the segment pool, add
-// per-segment use counts if freed small regions start to dominate.
+// hNext holds the live slot count while a segment belongs to a small class.
 func (db *DB) freeSlot(c uint32, off uint64) {
 	h := hClasses + uint64(c-1)*16
 	db.put(0, off, zeros[:classSize(c)])
@@ -187,6 +204,26 @@ func (db *DB) freeSlot(c uint32, off uint64) {
 	le.PutUint64(b[:], db.hdr(h))
 	db.put(0, off, b[:])
 	db.setHdr(h, off)
+	seg := off / SegSize
+	countOff := hNext + seg*8
+	count := db.hdr(countOff) - 1
+	db.setHdr(countOff, count)
+	if count != 0 {
+		return
+	}
+	// Remove this segment's free slots before returning the segment to the pool.
+	link := uint64(h)
+	for slot := db.hdr(link); slot != 0; slot = db.hdr(link) {
+		if slot/SegSize == seg {
+			db.setHdr(link, db.hdr(slot))
+		} else {
+			link = slot
+		}
+	}
+	if db.hdr(h+8)/SegSize == seg {
+		db.setHdr(h+8, 0)
+	}
+	db.freeSeg(seg)
 }
 
 func (db *DB) allocID() (Region, error) {
@@ -197,6 +234,14 @@ func (db *DB) allocID() (Region, error) {
 	r := db.hdr(hNextRegion)
 	if r >= db.maxRegions {
 		return 0, ErrFull
+	}
+	directory := db.regTab + r/regionsPerSegment*8
+	if db.hdr(directory) == 0 {
+		s, err := db.allocSeg()
+		if err != nil {
+			return 0, err
+		}
+		db.setHdr(directory, s)
 	}
 	db.setHdr(hNextRegion, r+1)
 	return Region(r), nil

@@ -3,6 +3,7 @@ package pagerdb
 import (
 	"crypto/sha256"
 	"hash/crc32"
+	"math/bits"
 	"os"
 	"runtime"
 	"slices"
@@ -21,6 +22,9 @@ func hashPair(a, b []byte) [32]byte {
 }
 
 func (db *DB) markDirty(off, n uint64) {
+	if n == 0 {
+		return
+	}
 	for l := off / LeafSize; l <= (off+n-1)/LeafSize; l++ {
 		if db.dirtyBit[l/64]&(1<<(l%64)) == 0 {
 			db.dirtyBit[l/64] |= 1 << (l % 64)
@@ -29,9 +33,33 @@ func (db *DB) markDirty(off, n uint64) {
 	}
 }
 
+// treeOffset groups seven tree levels into each 4 KiB tile. The top tile
+// contains the remainder so every lower tile has all 127 nodes.
+func treeOffset(i uint64, depth int) uint64 {
+	d := bits.Len64(i) - 1
+	top := depth%7 + 1
+	if d < top {
+		return (i - 1) * 32
+	}
+	k := (d - top) / 7
+	rootDepth := top + 7*k
+	localDepth := d - rootDepth
+	prefix := i >> localDepth
+	before := uint64(1) + (uint64(1)<<top)*((uint64(1)<<(7*k))-1)/127
+	tile := before + prefix - (uint64(1) << rootDepth)
+	local := (uint64(1) << localDepth) + (i & ((uint64(1) << localDepth) - 1))
+	return tile*4096 + (local-1)*32
+}
+
+func treeStorageSize(leaves uint64) uint64 {
+	depth := bits.TrailingZeros64(leaves)
+	return (treeOffset(2*leaves-1, depth)/4096 + 1) * 4096
+}
+
 // node returns tree node i at level (0 = leaf). An all-zero slot is an untouched empty subtree.
 func (db *DB) node(i uint64, level int) []byte {
-	h := db.tree[i*32 : i*32+32]
+	off := treeOffset(i, db.depth)
+	h := db.tree[off : off+32]
 	if le.Uint64(h) == 0 && le.Uint64(h[8:]) == 0 && le.Uint64(h[16:]) == 0 && le.Uint64(h[24:]) == 0 {
 		return db.empty[level][:]
 	}
@@ -67,7 +95,7 @@ func (db *DB) hashDirty() [32]byte {
 		for _, i := range idx[lo:hi] {
 			off := (i - db.maxLeaves) * LeafSize
 			h := sha256.Sum256(db.state[off : off+LeafSize])
-			copy(db.tree[i*32:], h[:])
+			copy(db.tree[treeOffset(i, db.depth):], h[:])
 		}
 	})
 	for level := 1; level <= db.depth; level++ {
@@ -85,7 +113,7 @@ func (db *DB) hashDirty() [32]byte {
 				copy(buf[:32], db.node(2*i, level-1))
 				copy(buf[32:], db.node(2*i+1, level-1))
 				h := sha256.Sum256(buf[:])
-				copy(db.tree[i*32:], h[:])
+				copy(db.tree[treeOffset(i, db.depth):], h[:])
 			}
 		})
 	}
