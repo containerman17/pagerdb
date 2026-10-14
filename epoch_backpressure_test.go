@@ -104,8 +104,11 @@ func TestSealBackpressure(t *testing.T) {
 			}
 			db.sealWG.Wait()
 			db.mu.Lock()
-			pending, epoch := db.sealPending, db.cur.epoch
+			pending, epoch, waits := db.sealPending, db.cur.epoch, db.sealWaits
 			db.mu.Unlock()
+			if waits != 1 {
+				t.Fatalf("waiting rotations: %d", waits)
+			}
 			if pending != 0 {
 				t.Fatalf("pending after drain: %d", pending)
 			}

@@ -3,11 +3,12 @@ package pagerdb
 import (
 	"bufio"
 	"fmt"
-	"github.com/klauspost/compress/zstd"
 	"io"
 	"os"
 	"runtime"
 	"sync"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 type sealBuffers struct {

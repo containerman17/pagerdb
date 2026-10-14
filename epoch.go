@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"github.com/klauspost/compress/zstd"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,6 +11,8 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 // EpochStore holds sealed epoch files. Put and Delete must be durable when
@@ -138,6 +139,7 @@ type sealState struct {
 	sealed      []*sealedEpoch
 	sealQ       []*chunk
 	sealPending int
+	sealWaits   uint64
 	sealWorkers []sealBuffers
 	sealCond    sync.Cond
 	sealWG      sync.WaitGroup

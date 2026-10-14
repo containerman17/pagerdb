@@ -213,6 +213,9 @@ func (db *DB) Touch(r Region, off, n int) {
 func (db *DB) rotate() error {
 	// Bound future history that the sealer must undo to reconstruct its end state.
 	// Recovery can enqueue an existing backlog; new rotations wait for it to drain.
+	if db.sealPending >= 2 && db.sealErr == nil && !db.sealStop {
+		db.sealWaits++
+	}
 	for db.sealPending >= 2 && db.sealErr == nil && !db.sealStop {
 		db.sealCond.Wait()
 	}
