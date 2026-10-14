@@ -70,18 +70,29 @@ rotations wait for it to drain. The limit is two active and queued epochs combin
 Sealed history stores **backward XOR records**. The head is the base. Each write
 becomes old XOR new, trimmed to its first and last nonzero byte. No-op writes have
 no record. Per-leaf records run newest first, including reverse write order within
-a version. A full run of about 256 KiB ends with a leaf copy after undoing that run;
-a rarely changed leaf has no base copy. Frames use fastest-level zstd only when it
-saves at least 10%.
+a version. A full run of 16 KiB ends with a leaf copy after undoing that run. Across
+epochs, the sealer charges each changed epoch its final-run bytes plus 256 bytes
+per epoch hop, plus 16 KiB if the epoch had several runs. When the charge since the
+leaf's last base copy reaches 16 KiB, that epoch's final run also ends with a leaf
+copy: the leaf state at the epoch start. A leaf changed once per epoch therefore
+gets a base copy about every 60 changed epochs. Frames use fastest-level zstd only
+when it saves at least 10%.
 
 Each epoch has a sorted sparse cumulative leaf index. Its latest-change and
 previous-change pointers lead directly to epochs where a leaf changed. Indexes,
-frame directories, and dense version/range lists stay on disk behind a bounded
-256 KiB index-page cache. A read first undoes live writes to the newest sealed
-boundary, then walks changed epochs backward to the requested version. Each hop
-uses O(log indexed leaves) lookup. Within an epoch, it binary-searches the dense
-change list, skips payloads with no overlapping change, and uses a newer full-run
-copy when available. Work grows with relevant history, not with untouched epochs.
+frame directories, and dense version/range lists stay on disk. Epoch files from
+`LocalStore` are mapped read-only, so the OS page cache keeps hot index pages and
+raw frames are read in place; other stores go through a process-wide 2 MiB
+index-page cache. Decoders and decode buffers are pooled, so sealed reads do not
+allocate. A read first undoes live writes to the newest sealed
+boundary, then follows base pointers to the oldest base copy at or after the
+requested version, using two index lookups per base. From that copy it walks
+changed epochs backward to the requested version. Each hop uses O(log indexed
+leaves) lookup. Within an epoch, it binary-searches the dense change list, skips
+payloads with no overlapping change, and uses a newer full-run copy when available.
+The decode work after the copy is bounded by the 16 KiB charge plus at most two
+frames in the target epoch, so deep reads cost the base hops plus one bounded walk.
+Work grows with relevant history, not with untouched epochs.
 Cumulative index rows trade extra disk space for direct lookup.
 
 A contiguous prefix of old epoch files can be deleted while the database is closed.
@@ -292,10 +303,10 @@ commit/checkpoint. Recovery repeats restoration before removing the intent.
 
 ### Sealed epochs
 
-The epoch magic is `PGEPOCH3`. The state format remains `PAGERDB2`. Header, 64 bytes:
+The epoch magic is `PGEPOCH4`. The state format remains `PAGERDB2`. Header, 64 bytes:
 
 ```
-0  "PGEPOCH3" [8]
+0  "PGEPOCH4" [8]
 8  epoch u64
 16 checkpoint version u64
 24 end version u64
@@ -328,10 +339,11 @@ writes, so stored new bytes alone do not identify each intermediate state. Seali
 starts a fixed-size working leaf at the epoch end, then computes each record as
 working XOR old and replaces working with old. This preserves the live log's exact
 newest-first undo semantics, including overlapping deferred Touch operations.
-The run contains at most 262144 record bytes. A full run appends a 1024-byte leaf
+The run contains at most 16384 record bytes. A full run appends a 1024-byte leaf
 copy representing the state after undoing that run. Every nonfinal run has a copy;
-the final run has one only if full. Copies occur at the end, never as frame bases.
-The decoded payload is at most 263168 bytes. Compression uses zstd fastest only
+the final run has one exactly when the index row names this epoch as the leaf's
+base epoch. Copies occur at the end, never as frame bases.
+The decoded payload is at most 17408 bytes. Compression uses zstd fastest only
 when compressed bytes are at most 90% of raw bytes. No other flag bits are valid.
 
 Each frame directory row is 24 bytes:
@@ -340,10 +352,14 @@ Each dense change row is 8 bytes:
 `relative version u32 | offset u16 | length u16`, in the same newest-first order.
 These uncompressed rows permit binary search before a frame is decompressed.
 
-The cumulative leaf index is sorted by leaf, with 48-byte rows:
+The cumulative leaf index is sorted by leaf, with 64-byte rows:
 `leaf u32 | frame count u32 | directory offset u64 | latest changed epoch u64 |
-previous changed epoch u64 | dense list offset u64 | record count u64`.
-Inherited rows retain only leaf and latest changed epoch; all other fields are zero.
+previous changed epoch u64 | dense list offset u64 | record count u64 |
+base epoch u64 | undo charge u32 | zero u32`. The base epoch is the newest epoch at
+or before the latest change whose final run ends in a base copy (zero if none);
+the undo charge counts work since that base and is below 16384, and zero when the
+base is the latest change. Inherited rows retain only leaf, latest changed epoch,
+base epoch and undo charge; all other fields are zero.
 All offsets are absolute file offsets. Root rows are
 `root [32] | version u64`, 40 bytes, sorted by root and then ascending version.
 There is one root per version from checkpoint through end inclusive. The file ends

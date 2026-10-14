@@ -105,25 +105,29 @@ func (s *LocalStore) Open(epoch uint64) (io.ReaderAt, int64, error) {
 // Latest returns the highest stored epoch number, or zero.
 func (s *LocalStore) Latest() uint64 { return s.latest.Load() }
 
-// PGEPOCH3 stores backward XOR changes. Header fields are seven little-endian
+// PGEPOCH4 stores backward XOR changes. Header fields are seven little-endian
 // u64 values after the magic: epoch, checkpoint version, end version, cumulative
-// leaf count, index offset, root count, roots offset. Index rows are 48 bytes:
+// leaf count, index offset, root count, roots offset. Index rows are 64 bytes:
 // leaf u32, frames u32, directory offset u64, latest epoch u64, previous epoch
-// u64, dense offset u64, records u64. Inherited rows keep only leaf/latest epoch.
+// u64, dense offset u64, records u64, base epoch u64, undo cost u32, zero u32.
+// Inherited rows keep only leaf, latest epoch, base epoch and undo cost.
 // Dense rows are version relative to checkpoint u32, offset u16, length u16.
 // They are newest first, including reverse write order within one version.
 // Frame directories are offset u64, first record u64, count u32, flags u32.
 // Frame headers are flags u8, padding[3], stored length u32, decoded length u32,
 // count u32, first record u64, oldest relative version u32, newest version u32.
-// Payloads are dense-row headers followed by XOR bytes. A full run additionally
-// ends with the 1024-byte leaf after undoing that run. Flag bits are zstd=1 and
+// Payloads are dense-row headers followed by XOR bytes. A full run, and a final
+// run that starts a new base, additionally ends with the 1024-byte leaf after
+// undoing that run. Flag bits are zstd=1 and
 // full-copy=2. Roots remain sorted (hash[32], version u64) records.
 const (
-	epochMagic  = "PGEPOCH3"
-	epochHdr    = 64
-	frameHdr    = 32
-	frameCap    = 256 << 10
-	idxRec      = 48
+	epochMagic = "PGEPOCH4"
+	epochHdr   = 64
+	frameHdr   = 32
+	frameCap   = 16 << 10
+	idxRec     = 64
+	// baseHopCost charges each epoch hop as this many decoded bytes.
+	baseHopCost = 256
 	denseRec    = 8
 	frameDirRec = 24
 	rootRec     = 40
@@ -426,7 +430,8 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64, mem []byte) (*sealedEp
 			return nil, e
 		}
 		leaf, frames, dir, last, prior, dense, n := le.Uint32(r[:]), le.Uint32(r[4:]), le.Uint64(r[8:]), le.Uint64(r[16:]), le.Uint64(r[24:]), le.Uint64(r[32:]), le.Uint64(r[40:])
-		if i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || frames == 0 && (dir != 0 || last == epoch || prior != 0 || dense != 0 || n != 0) || frames > 0 && (last != epoch || prior >= epoch || n == 0 || dir < epochHdr || dir > s.indexOff || uint64(frames) > (s.indexOff-dir)/frameDirRec || dense < epochHdr || dense > s.indexOff || n > (s.indexOff-dense)/denseRec) {
+		base, cost := le.Uint64(r[48:]), le.Uint32(r[56:])
+		if i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || base > last || cost >= frameCap || base == last && cost != 0 || le.Uint32(r[60:]) != 0 || frames == 0 && (dir != 0 || last == epoch || prior != 0 || dense != 0 || n != 0) || frames > 0 && (last != epoch || prior >= epoch || n == 0 || dir < epochHdr || dir > s.indexOff || uint64(frames) > (s.indexOff-dir)/frameDirRec || dense < epochHdr || dense > s.indexOff || n > (s.indexOff-dense)/denseRec) {
 			return nil, fmt.Errorf("pagerdb: epoch %d: invalid cumulative index", epoch)
 		}
 		prevLeaf = leaf
@@ -444,6 +449,9 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64, mem []byte) (*sealedEp
 				return nil, fmt.Errorf("pagerdb: invalid XOR frame directory")
 			}
 			expected += uint64(count)
+			if j+1 == frames && (base == epoch) != (flags&2 != 0) {
+				return nil, fmt.Errorf("pagerdb: XOR base copy mismatch")
+			}
 		}
 		if expected != n {
 			return nil, fmt.Errorf("pagerdb: XOR directory count mismatch")
@@ -592,9 +600,6 @@ func decodeXORFrame(h, body, dst []byte) ([]byte, error) {
 	records := len(body)
 	if h[0]&2 != 0 {
 		records -= LeafSize
-		if records < frameCap-(denseRec+LeafSize)+1 {
-			return nil, fmt.Errorf("pagerdb: premature run copy")
-		}
 	}
 	if records < 0 || records > frameCap {
 		return nil, fmt.Errorf("pagerdb: XOR record size")
@@ -843,34 +848,107 @@ func (db *DB) sealedRange(leaf, v, offset uint64, out []byte) error {
 	if err != nil || !ok {
 		return err
 	}
-	epoch := le.Uint64(row[16:])
-	for epoch != 0 {
+	// find returns nil for an epoch older than the retained history.
+	find := func(epoch uint64) (*sealedEpoch, [idxRec]byte, error) {
+		var row [idxRec]byte
 		i := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].epoch >= epoch })
 		if i == len(db.sealed) || db.sealed[i].epoch != epoch {
 			if epoch < db.sealed[0].epoch {
-				return nil
+				return nil, row, nil
 			}
-			return fmt.Errorf("pagerdb: missing previous XOR epoch %d", epoch)
+			return nil, row, fmt.Errorf("pagerdb: missing previous XOR epoch %d", epoch)
 		}
-		s := db.sealed[i]
-		if s.end <= v {
-			return nil
+		return db.sealed[i], row, nil
+	}
+	// changed loads the row of a recorded change of leaf in s.
+	changed := func(s *sealedEpoch) ([idxRec]byte, error) {
+		row, ok, err := s.lookup(leaf)
+		if err == nil && (!ok || le.Uint32(row[4:]) == 0 || le.Uint64(row[16:]) != s.epoch) {
+			err = fmt.Errorf("pagerdb: missing XOR leaf in previous epoch")
 		}
-		row, ok, err = s.lookup(leaf)
+		return row, err
+	}
+	s, _, err := find(le.Uint64(row[16:]))
+	if err != nil || s == nil {
+		return err
+	}
+	if row, err = changed(s); err != nil {
+		return err
+	}
+	// Jump along base copies to the oldest one at or after v; the undo walk
+	// from there is bounded by the sealer's base policy.
+	var from *sealedEpoch
+	var fromRow [idxRec]byte
+	for base := le.Uint64(row[48:]); base != 0; base = le.Uint64(row[48:]) {
+		b, brow, err := find(base)
 		if err != nil {
 			return err
 		}
-		if !ok || le.Uint32(row[4:]) == 0 || le.Uint64(row[16:]) != epoch {
-			return fmt.Errorf("pagerdb: missing XOR leaf in previous epoch")
+		if b == nil || b.start < v {
+			break
 		}
-		if err = s.undoLeaf(row, v, offset, out); err != nil {
+		if brow, err = changed(b); err != nil {
 			return err
 		}
-		if s.start <= v {
+		if le.Uint64(brow[48:]) != base {
+			return fmt.Errorf("pagerdb: XOR base epoch without copy")
+		}
+		from, fromRow = b, brow
+		prior := le.Uint64(brow[24:])
+		if prior == 0 {
+			s = nil
+			break
+		}
+		if s, _, err = find(prior); err != nil {
+			return err
+		}
+		if s == nil {
+			break
+		}
+		if row, err = changed(s); err != nil {
+			return err
+		}
+	}
+	if from != nil {
+		if err = from.baseCopy(fromRow, offset, out); err != nil || from.start == v {
+			return err
+		}
+	}
+	for s != nil && s.end > v {
+		if err = s.undoLeaf(row, v, offset, out); err != nil || s.start <= v {
+			return err
+		}
+		prior := le.Uint64(row[24:])
+		if prior == 0 {
 			return nil
 		}
-		epoch = le.Uint64(row[24:])
+		if s, _, err = find(prior); err != nil || s == nil {
+			return err
+		}
+		if row, err = changed(s); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// baseCopy copies the leaf state at the epoch start from the final run's copy.
+func (s *sealedEpoch) baseCopy(row [idxRec]byte, offset uint64, out []byte) error {
+	d, err := s.frameRecord(row, le.Uint32(row[4:])-1)
+	if err != nil {
+		return err
+	}
+	if le.Uint32(d[20:])&2 == 0 {
+		return fmt.Errorf("pagerdb: XOR base epoch without copy")
+	}
+	buf := frameBuffers.Get().(*[]byte)
+	defer frameBuffers.Put(buf)
+	_, body, err := s.readFrame(d, *buf)
+	if err != nil {
+		return err
+	}
+	tail := body[len(body)-LeafSize:]
+	copy(out, tail[offset:])
 	return nil
 }
 

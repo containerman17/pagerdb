@@ -22,7 +22,7 @@ type xorWorkloadRecord struct {
 
 type xorWorkloadMetrics struct {
 	records, untrimmed, untrimmedCompressed, trimmed, trimmedCompressed uint64
-	frames, compressedFrames, fileBytes                                 uint64
+	frames, compressedFrames, copies, fileBytes                         uint64
 }
 
 type xorWorkload struct {
@@ -36,9 +36,9 @@ type xorWorkload struct {
 
 // xorWorkloadFixture changes two adjacent uint256 values per leaf per version.
 // The counter and balance use big-endian integers, with leading zero bytes.
-func xorWorkloadFixture(tb testing.TB, random bool, capture bool) *xorWorkload {
+func xorWorkloadFixture(tb testing.TB, random bool, capture bool, epochVersions uint64) *xorWorkload {
 	tb.Helper()
-	db, err := Open(tb.TempDir(), Options{MaxLeaves: 1 << 14, EpochVersions: 100, RetainVersions: 100})
+	db, err := Open(tb.TempDir(), Options{MaxLeaves: 1 << 14, EpochVersions: epochVersions, RetainVersions: 100})
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -163,13 +163,13 @@ func inspectXORWorkload(tb testing.TB, f *xorWorkload) {
 		if _, err := s.ra.ReadAt(header[:], 0); err != nil {
 			tb.Fatal(err)
 		}
-		if string(header[:8]) != "PGEPOCH3" {
-			tb.Fatal("XOR metrics require PGEPOCH3")
+		if string(header[:8]) != "PGEPOCH4" {
+			tb.Fatal("XOR metrics require PGEPOCH4")
 		}
 		f.metrics.fileBytes += uint64(s.size)
 		for i := uint64(0); i < s.nLeaves; i++ {
-			var index [48]byte
-			if _, err := s.ra.ReadAt(index[:], int64(s.indexOff+i*48)); err != nil {
+			var index [idxRec]byte
+			if _, err := s.ra.ReadAt(index[:], int64(s.indexOff+i*idxRec)); err != nil {
 				tb.Fatal(err)
 			}
 			leaf := uint64(le.Uint32(index[:]))
@@ -190,11 +190,13 @@ func inspectXORWorkload(tb testing.TB, f *xorWorkload) {
 				if h[0]&1 != 0 {
 					f.metrics.compressedFrames++
 				}
+				raw := uint64(le.Uint32(h[8:]))
 				if h[0]&2 != 0 {
-					tb.Fatal("workload should not fill a 256 KiB run")
+					f.metrics.copies++
+					raw -= LeafSize
 				}
 				f.metrics.trimmedCompressed += 32 + uint64(le.Uint32(h[4:]))
-				actualRaw += 32 + uint64(le.Uint32(h[8:]))
+				actualRaw += 32 + raw
 				actualRecords += uint64(le.Uint32(h[12:]))
 			}
 		}
@@ -216,11 +218,11 @@ func TestXORWorkloadMetrics(t *testing.T) {
 			name = "Random"
 		}
 		t.Run(name, func(t *testing.T) {
-			f := xorWorkloadFixture(t, random, true)
+			f := xorWorkloadFixture(t, random, true, 100)
 			inspectXORWorkload(t, f)
 			m := f.metrics
 			records := float64(m.records)
-			t.Logf("records=%d frames=%d raw_before=%.4f B/record raw_after=%.4f B/record zstd_before=%.4f B/record zstd_after=%.4f B/record kept_zstd=%.4f all_epoch_bytes=%.4f B/app-record", m.records, m.frames, float64(m.untrimmed)/records, float64(m.trimmed)/records, float64(m.untrimmedCompressed)/records, float64(m.trimmedCompressed)/records, float64(m.compressedFrames)/float64(m.frames), float64(m.fileBytes)/records)
+			t.Logf("records=%d frames=%d copies=%d raw_before=%.4f B/record raw_after=%.4f B/record zstd_before=%.4f B/record zstd_after=%.4f B/record kept_zstd=%.4f all_epoch_bytes=%.4f B/app-record", m.records, m.frames, m.copies, float64(m.untrimmed)/records, float64(m.trimmed)/records, float64(m.untrimmedCompressed)/records, float64(m.trimmedCompressed)/records, float64(m.compressedFrames)/float64(m.frames), float64(m.fileBytes)/records)
 			for _, age := range []uint64{1, 100, 10000} {
 				v := f.head - age
 				vw, err := f.db.View(v)
@@ -250,15 +252,17 @@ func TestXORWorkloadMetrics(t *testing.T) {
 }
 
 // BenchmarkXORSealedRead bypasses the retained live log. It measures a direct
-// 64-byte sealed range read, excluding View creation and region lookup.
+// 64-byte sealed range read, excluding View creation and region lookup. EVM and
+// Random use 100-version epochs, so 10000 versions back crosses 100 epochs; the
+// Epoch10000 variants use the default epoch length.
 func BenchmarkXORSealedRead(b *testing.B) {
-	for _, random := range []bool{false, true} {
-		name := "EVM"
-		if random {
-			name = "Random"
-		}
-		b.Run(name, func(b *testing.B) {
-			f := xorWorkloadFixture(b, random, false)
+	for _, c := range []struct {
+		name   string
+		random bool
+		epoch  uint64
+	}{{"EVM", false, 100}, {"Random", true, 100}, {"EVMEpoch10000", false, 10000}, {"RandomEpoch10000", true, 10000}} {
+		b.Run(c.name, func(b *testing.B) {
+			f := xorWorkloadFixture(b, c.random, false, c.epoch)
 			for _, age := range []struct {
 				name string
 				n    uint64

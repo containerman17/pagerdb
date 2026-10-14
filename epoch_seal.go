@@ -79,7 +79,7 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 					break
 				}
 				clear(copiedIndex[4:16])
-				clear(copiedIndex[24:])
+				clear(copiedIndex[24:48])
 				if _, e = iw.Write(copiedIndex[:]); e != nil {
 					return e
 				}
@@ -218,19 +218,34 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 				copy(boundary[off:off+n], c.m[oldAt:oldAt+n])
 				_, readErr = io.ReadFull(sr, rec[:])
 			}
-			if err = flush(len(payload) >= frameCap); err != nil {
-				return err
-			}
 			if count == 0 {
 				if prior != 0 {
 					clear(inherited[4:16])
-					clear(inherited[24:])
+					clear(inherited[24:48])
 					if _, err = iw.Write(inherited[:]); err != nil {
 						return err
 					}
 					nLeaves++
 				}
 				continue
+			}
+			// A base copy at the epoch start bounds how much history a deep read
+			// undoes: once the undo work since the last base would reach one
+			// frame, this epoch's final run ends in a copy.
+			base, cost := uint64(0), uint32(0)
+			if prior != 0 {
+				base, cost = le.Uint64(inherited[48:]), le.Uint32(inherited[56:])
+			}
+			cost += baseHopCost + uint32(len(payload))
+			if frames > 0 {
+				cost += frameCap
+			}
+			full := len(payload) >= frameCap || cost >= frameCap
+			if err = flush(full); err != nil {
+				return err
+			}
+			if full {
+				base, cost = c.epoch, 0
 			}
 			le.PutUint32(indexRow[:], uint32(leaf))
 			le.PutUint32(indexRow[4:], frames)
@@ -239,6 +254,8 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 			le.PutUint64(indexRow[24:], prior)
 			le.PutUint64(indexRow[32:], leafDense)
 			le.PutUint64(indexRow[40:], count)
+			le.PutUint64(indexRow[48:], base)
+			le.PutUint32(indexRow[56:], cost)
 			if _, err = iw.Write(indexRow[:]); err != nil {
 				return err
 			}

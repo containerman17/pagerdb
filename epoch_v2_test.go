@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -234,7 +235,7 @@ func TestXORFrameValidation(t *testing.T) {
 	}
 }
 func xorCopyFrameSeed() []byte {
-	const count = 254
+	const count = frameCap / (denseRec + LeafSize)
 	payload := make([]byte, 0, count*(denseRec+LeafSize)+LeafSize)
 	for i := 0; i < count; i++ {
 		var r [denseRec]byte
@@ -459,6 +460,10 @@ func TestXORRunCopies(t *testing.T) {
 	if le.Uint32(row[4:]) < 3 {
 		t.Fatal("missing run split")
 	}
+	// Several runs exceed one frame of undo work, so the final run is a base.
+	if le.Uint64(row[48:]) != s.epoch {
+		t.Fatal("multi-run leaf without base copy")
+	}
 	for i := uint32(0); i < le.Uint32(row[4:]); i++ {
 		d, e := s.frameRecord(row, i)
 		if e != nil {
@@ -469,7 +474,7 @@ func TestXORRunCopies(t *testing.T) {
 			t.Fatal(e)
 		}
 		copyFlag := h[0]&2 != 0
-		if copyFlag != (i+1 < le.Uint32(row[4:])) {
+		if !copyFlag {
 			t.Fatalf("copy flag on run %d", i)
 		}
 		if copyFlag && len(body) < LeafSize {
@@ -684,6 +689,83 @@ func TestXORRetainedViewBeforePrunedSealedPrefix(t *testing.T) {
 		v.Close()
 		if got[0] != 1 {
 			t.Fatalf("retained prefix view returned %d", got[0])
+		}
+	}
+}
+
+// TestXORBaseCopies checks deep reads that jump along cross-epoch base copies
+// against every version of a hot leaf and a rarely changed leaf.
+func TestXORBaseCopies(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 13, EpochVersions: 10, RetainVersions: 10})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(2 * LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	first := db.loc(r).off / LeafSize
+	rng := rand.New(rand.NewPCG(5, 9))
+	snapshots := map[uint64][2][LeafSize]byte{}
+	var cur [2][LeafSize]byte
+	for i := 0; i < 2000; i++ {
+		off := rng.IntN(LeafSize - 200)
+		b := make([]byte, 1+rng.IntN(200))
+		for j := range b {
+			b[j] = byte(rng.Uint32())
+		}
+		db.Write(r, off, b)
+		copy(cur[0][off:], b)
+		if i%3 == 0 {
+			db.Write(r, LeafSize+off, b[:1])
+			copy(cur[1][off:], b[:1])
+		}
+		_, v, e := db.Commit()
+		if e != nil {
+			t.Fatal(e)
+		}
+		snapshots[v] = cur
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	for leaf, want := range []int{10, 2} {
+		bases := 0
+		for _, s := range db.sealed {
+			row, ok, e := s.lookup(first + uint64(leaf))
+			if e != nil {
+				t.Fatal(e)
+			}
+			if ok && le.Uint64(row[48:]) == s.epoch && le.Uint32(row[4:]) != 0 {
+				bases++
+			}
+		}
+		if bases < want {
+			t.Fatalf("leaf %d has only %d base copies", leaf, bases)
+		}
+	}
+	for v, want := range snapshots {
+		if v < db.sealed[0].start || v >= db.sealed[len(db.sealed)-1].end {
+			continue
+		}
+		for leaf := range want {
+			var got [LeafSize]byte
+			if e = db.sealedRange(first+uint64(leaf), v, 0, got[:]); e != nil {
+				t.Fatal(e)
+			}
+			if got != want[leaf] {
+				t.Fatalf("version %d leaf %d differs", v, leaf)
+			}
+			if e = db.sealedRange(first+uint64(leaf), v, 100, got[:50]); e != nil {
+				t.Fatal(e)
+			}
+			if !bytes.Equal(got[:50], want[leaf][100:150]) {
+				t.Fatalf("version %d leaf %d partial read differs", v, leaf)
+			}
 		}
 	}
 }
