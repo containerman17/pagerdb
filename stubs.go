@@ -1,15 +1,14 @@
 package pagerdb
 
-// Temporary stand-ins for views and epochs, replaced in the next steps.
+// Temporary stand-ins for epochs, replaced in the next steps.
 
 import (
 	"io"
 	"sync"
 )
 
-type viewState struct{ pins map[uint64]int }
-
 type sealState struct {
+	sealed   []*sealedEpoch
 	sealCond sync.Cond
 	sealDone chan struct{}
 	sealErr  error
@@ -32,3 +31,8 @@ func (db *DB) closeSealed()                             {}
 func (db *DB) enqueueSeal(*chunk)                       {}
 func (db *DB) sealer()                                  {}
 func (db *DB) loadSealed() error                        { return nil }
+
+type sealedEpoch struct{ end uint64 }
+
+func (s *sealedEpoch) findRoot([32]byte) (uint64, bool, error) { return 0, false, nil }
+func (db *DB) sealedLeaf(leaf, v uint64, out []byte) error     { return ErrVersion }
