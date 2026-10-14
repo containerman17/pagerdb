@@ -1,29 +1,10 @@
 package pagerdb
 
-// Temporary stand-ins for the log, tree, views and epochs, replaced in the next steps.
+// Temporary stand-ins for recovery, views and epochs, replaced in the next steps.
 
-import (
-	"io"
-	"os"
-	"path/filepath"
-)
+import "io"
 
-type logState struct {
-	cur        *chunk
-	chunks     []*chunk
-	blockStart int64
-	blockSeq   int64
-	touches    []int64
-}
-
-type chunk struct {
-	m    []byte
-	tail int64
-}
-
-func (c *chunk) close() {}
-
-type viewState struct{}
+type viewState struct{ pins map[uint64]int }
 
 type sealState struct{ sealErr error }
 
@@ -37,17 +18,27 @@ type Mark struct{}
 
 func NewLocalStore(string) (EpochStore, error) { return nil, nil }
 
-func (db *DB) put(_ Region, fo uint64, b []byte) { copy(db.state[fo:], b) }
-func (db *DB) markDirty(off, n uint64)           {}
-func (db *DB) mark() Mark                        { return Mark{} }
-func (db *DB) undo(Mark)                         {}
-func (db *DB) undoTo(pos, seq int64)             {}
-func (db *DB) stopSealer()                       {}
-func (db *DB) closeSealed()                      {}
-func sha256Sum([]byte) [32]byte                  { return [32]byte{} }
-func hashPair(a, b []byte) [32]byte              { return [32]byte{} }
+func (db *DB) mark() Mark            { return Mark{} }
+func (db *DB) undo(Mark)             {}
+func (db *DB) undoTo(pos, seq int64) {}
+func (db *DB) stopSealer()           {}
+func (db *DB) closeSealed()          {}
+func (db *DB) enqueueSeal(*chunk)    {}
 
+// open always creates a fresh store until recovery exists.
 func (db *DB) open() error {
-	_, err := os.Stat(filepath.Join(db.dir, "state"))
-	return db.mapFiles(err != nil)
+	db.heads = map[uint32]int64{}
+	db.rootIdx = map[[32]byte]uint64{}
+	if err := db.mapFiles(true); err != nil {
+		return err
+	}
+	db.root = db.hashDirty()
+	c, err := db.newChunk(1, 0, db.root)
+	if err != nil {
+		return err
+	}
+	db.cur, db.chunks = c, []*chunk{c}
+	db.blocks = []block{{ver: 0, root: db.root, c: c, end: cpRec}}
+	db.blockStart = cpRec
+	return nil
 }
