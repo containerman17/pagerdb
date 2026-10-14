@@ -281,3 +281,30 @@ func TestConcurrentViews(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProofAfterUndo(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Write(r, 0, []byte("committed"))
+	root, v, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := db.Mark()
+	db.Write(r, 0, []byte("pending"))
+	db.Undo(m)
+	p, err := db.Proof(r, 0)
+	if err != nil || !Verify(root, p) {
+		t.Fatal("proof after full undo", err)
+	}
+	if db.Version() != v || db.Root() != root {
+		t.Fatal("proof changed committed version")
+	}
+}

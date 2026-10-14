@@ -190,3 +190,63 @@ func TestImageParserRejectsMalformed(t *testing.T) {
 type shortWriter struct{}
 
 func (shortWriter) Write(p []byte) (int, error) { return 0, nil }
+
+func TestExportAfterRetentionPrunesLogs(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14, EpochVersions: 2, RetainVersions: 3}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.Alloc(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first [32]byte
+	for i := byte(1); i <= 10; i++ {
+		db.Write(r, 0, []byte{i})
+		root, _, err := db.Commit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 1 {
+			first = root
+		}
+	}
+	if err = db.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if db.chunks[0].start == 0 {
+		t.Fatal("retention did not prune logs")
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	vw, err := db.View(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer vw.Close()
+	var got [1]byte
+	if err = vw.Read(r, 0, 1, got[:]); err != nil || got[0] != 1 {
+		t.Fatalf("sealed view %v %v", got, err)
+	}
+	var image bytes.Buffer
+	if err = db.Export(1, &image); err != nil {
+		t.Fatal(err)
+	}
+	imported, err := Import(filepath.Join(t.TempDir(), "copy"), &image, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer imported.Close()
+	imported.Read(r, 0, 1, got[:])
+	if got[0] != 1 {
+		t.Fatal("sealed export differs")
+	}
+}

@@ -85,7 +85,7 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 	addChanged := func(leaf uint64) {
 		off := leaf * LeafSize
 		if l.segs == nil {
-			if off < l.off || off >= l.off+l.size {
+			if off+LeafSize <= l.off || off >= l.off+l.size {
 				return
 			}
 		} else if !segments[off/SegSize] {
@@ -114,13 +114,15 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 	}
 	var readErr error
 	l.each(0, l.size, func(fo, pos, n uint64) {
-		for p := uint64(0); p < n; p += LeafSize {
+		for p := uint64(0); p < n; {
+			count := min(n-p, LeafSize-(fo+p)%LeafSize)
 			if _, ok := changed[(fo+p)/LeafSize]; ok {
-				if err := vw.readFile(fo+p, m.data[pos+p:pos+p+LeafSize]); err != nil {
+				if err := vw.readFile(fo+p, m.data[pos+p:pos+p+count]); err != nil {
 					readErr = err
 					return
 				}
 			}
+			p += count
 		}
 	})
 	if readErr != nil {

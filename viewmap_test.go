@@ -138,3 +138,50 @@ func TestPrivateMapFallback(t *testing.T) {
 		t.Fatal("private write escaped")
 	}
 }
+
+func TestPrivateMapSmallSlots(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// The second slot is not leaf-aligned.
+	for range 2 {
+		r, err := db.Alloc(64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Write(r, 0, []byte("old"))
+		_, v, err := db.Commit()
+		if err != nil {
+			t.Fatal(err)
+		}
+		db.Write(r, 0, []byte("new"))
+		if _, _, err = db.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		vw, err := db.View(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l, err := vw.loc(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := vw.privateMap(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		vw.mappings = append(vw.mappings, m)
+		if string(m.data[:3]) != "old" {
+			t.Fatal("small slot was not restored")
+		}
+		m.data[0] = 'x'
+		var b [3]byte
+		db.Read(r, 0, 3, b[:])
+		if string(b[:]) != "new" {
+			t.Fatal("private small slot write escaped")
+		}
+		vw.Close()
+	}
+}

@@ -20,7 +20,12 @@ func (db *DB) Proof(r Region, off int) (Proof, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if len(db.dirty) > 0 {
-		return Proof{}, ErrPending
+		if db.seq() != db.blockSeq || len(db.touches) != 0 {
+			return Proof{}, ErrPending
+		}
+		if db.hashDirty() != db.root {
+			return Proof{}, fmt.Errorf("pagerdb: proof state differs from committed root")
+		}
 	}
 	l, err := locate(db.headU64, db.regTab, db.maxRegions, r)
 	if err != nil {
