@@ -326,54 +326,87 @@ func BenchmarkOpenVerified(b *testing.B) {
 }
 
 // BenchmarkSealEpoch measures sealing 240000 application writes in one epoch.
+// Cold opens a new database each iteration; Warm first seals an untimed epoch.
 // Setup writes and commits are untimed. Seal includes rotation, publication,
 // and validation; the records/s metric excludes allocator metadata records.
 func BenchmarkSealEpoch(b *testing.B) {
 	const leaves, versions = 2400, 100
-	b.StopTimer()
-	var elapsed time.Duration
-	for range b.N {
-		func() {
-			dir := b.TempDir()
-			db, err := Open(dir, Options{MaxLeaves: 1 << 17, EpochVersions: math.MaxUint64, EpochBytes: math.MaxInt64})
-			if err != nil {
-				b.Fatal(err)
+	for _, mode := range []string{"Cold", "Warm"} {
+		b.Run(mode, func(b *testing.B) {
+			b.StopTimer()
+			open := func() (*DB, Region, func()) {
+				dir := b.TempDir()
+				db, err := Open(dir, Options{MaxLeaves: 1 << 17, EpochVersions: math.MaxUint64, EpochBytes: math.MaxInt64})
+				if err != nil {
+					b.Fatal(err)
+				}
+				cleanup := func() {
+					if err := db.Close(); err != nil {
+						b.Error(err)
+					}
+					if err := os.RemoveAll(dir); err != nil {
+						b.Error(err)
+					}
+				}
+				r, err := db.Alloc(4 << 20)
+				if err != nil {
+					cleanup()
+					b.Fatal(err)
+				}
+				return db, r, cleanup
 			}
-			defer func() {
-				if err := db.Close(); err != nil {
-					b.Error(err)
+			prepare := func(db *DB, r Region) {
+				var value [64]byte
+				for range versions {
+					le.PutUint64(value[56:], db.Version()+1)
+					for leaf := 0; leaf < leaves; leaf++ {
+						db.Write(r, leaf*LeafSize, value[:])
+					}
+					if _, _, err := db.Commit(); err != nil {
+						b.Fatal(err)
+					}
 				}
-				if err := os.RemoveAll(dir); err != nil {
-					b.Error(err)
-				}
-			}()
-			r, err := db.Alloc(4 << 20)
-			if err != nil {
-				b.Fatal(err)
 			}
-			var value [64]byte
-			for version := 1; version <= versions; version++ {
-				le.PutUint64(value[56:], uint64(version))
-				for leaf := 0; leaf < leaves; leaf++ {
-					db.Write(r, leaf*LeafSize, value[:])
-				}
-				if _, _, err := db.Commit(); err != nil {
+			var db *DB
+			var r Region
+			if mode == "Warm" {
+				var cleanup func()
+				db, r, cleanup = open()
+				defer cleanup()
+				prepare(db, r)
+				if err := db.Seal(); err != nil {
 					b.Fatal(err)
 				}
 			}
-			b.StartTimer()
-			start := time.Now()
-			err = db.Seal()
-			elapsed += time.Since(start)
-			b.StopTimer()
-			if err != nil {
-				b.Fatal(err)
+			var elapsed time.Duration
+			for range b.N {
+				func() {
+					if mode == "Cold" {
+						var cleanup func()
+						db, r, cleanup = open()
+						defer cleanup()
+					}
+					epochStart := db.Version()
+					prepare(db, r)
+					b.StartTimer()
+					start := time.Now()
+					err := db.Seal()
+					elapsed += time.Since(start)
+					b.StopTimer()
+					if err != nil {
+						b.Fatal(err)
+					}
+					if len(db.sealed) == 0 {
+						b.Fatal("missing sealed epoch")
+					}
+					last := db.sealed[len(db.sealed)-1]
+					if last.start != epochStart || last.end != epochStart+versions {
+						b.Fatal("sealed epoch does not cover the prepared 100 versions")
+					}
+				}()
 			}
-			if len(db.sealed) != 1 || db.sealed[0].start != 0 || db.sealed[0].end != versions {
-				b.Fatal("expected one sealed epoch covering 100 versions")
-			}
-		}()
+			b.ReportMetric(float64(b.N)*leaves*versions/elapsed.Seconds(), "records/s")
+			b.ReportMetric(float64(elapsed)/float64(b.N)/1e6, "epoch-ms")
+		})
 	}
-	b.ReportMetric(float64(b.N)*leaves*versions/elapsed.Seconds(), "records/s")
-	b.ReportMetric(float64(elapsed)/float64(b.N)/1e6, "epoch-ms")
 }
