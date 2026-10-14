@@ -120,7 +120,7 @@ func TestPrivateMapFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	vw, _ := db.View(v)
-	l, _ := vw.loc(r)
+	l, _ := vw.loc(r, false)
 	m, err := vw.privateMap(l)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +164,7 @@ func TestPrivateMapSmallSlots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		l, err := vw.loc(r)
+		l, err := vw.loc(r, false)
 		if err != nil {
 			t.Fatal(err)
 		}

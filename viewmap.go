@@ -27,7 +27,7 @@ func (vw *View) Map(r Region) ([]byte, error) {
 	if vw.closed {
 		return nil, fmt.Errorf("pagerdb: view closed")
 	}
-	l, err := vw.loc(r)
+	l, err := vw.loc(r, false)
 	if err != nil {
 		return nil, err
 	}

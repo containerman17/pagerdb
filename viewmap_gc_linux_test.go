@@ -63,7 +63,7 @@ func TestUserfaultfdConcurrentGC(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		l, e := vw.loc(r)
+		l, e := vw.loc(r, false)
 		if e != nil {
 			vw.Close()
 			t.Fatal(e)
@@ -167,7 +167,7 @@ func TestUserfaultfdKernelIO(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer vw.Close()
-	l, err := vw.loc(r)
+	l, err := vw.loc(r, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -79,11 +79,15 @@ func (vw *View) Close() {
 	db.dropChunks()
 }
 
-func (vw *View) loc(r Region) (loc, error) {
+// loc resolves r at the view's version. held means the caller holds db.mu
+// and the view is a window view.
+func (vw *View) loc(r Region, held bool) (loc, error) {
 	var err error
 	rd := func(off uint64) uint64 {
 		var b [8]byte
-		if e := vw.readFile(off, b[:]); e != nil {
+		if held {
+			vw.db.readWindow(vw.v, off, b[:])
+		} else if e := vw.readFile(off, b[:]); e != nil {
 			err = e
 		}
 		return le.Uint64(b[:])
@@ -97,7 +101,24 @@ func (vw *View) loc(r Region) (loc, error) {
 
 // Read copies n bytes at off of region r, as of the view's version, into buf.
 func (vw *View) Read(r Region, off, n int, buf []byte) error {
-	l, err := vw.loc(r)
+	if vw.window {
+		// One lock acquisition covers the region lookup and the data.
+		vw.db.mu.Lock()
+		defer vw.db.mu.Unlock()
+		if vw.closed {
+			return fmt.Errorf("pagerdb: view closed")
+		}
+		l, err := vw.loc(r, true)
+		if err != nil {
+			return err
+		}
+		if off < 0 || n < 0 || uint64(off+n) > l.size {
+			return fmt.Errorf("pagerdb: range [%d,%d) outside region of %d bytes", off, off+n, l.size)
+		}
+		l.each(uint64(off), uint64(n), func(fo, pos, k uint64) { vw.db.readWindow(vw.v, fo, buf[pos:pos+k]) })
+		return nil
+	}
+	l, err := vw.loc(r, false)
 	if err != nil {
 		return err
 	}
@@ -114,7 +135,7 @@ func (vw *View) Read(r Region, off, n int, buf []byte) error {
 
 // Copy returns the whole region as of the view's version.
 func (vw *View) Copy(r Region) ([]byte, error) {
-	l, err := vw.loc(r)
+	l, err := vw.loc(r, false)
 	if err != nil {
 		return nil, err
 	}
@@ -150,52 +171,14 @@ func (vw *View) readFile(fo uint64, b []byte) error {
 	return nil
 }
 
-// readWindow reads state bytes at version v (inside the window): head bytes, then the old bytes
-// of every overlapping entry newer than v applied newest first, so the oldest one wins.
-// Caller holds db.mu.
+// readWindow reads state bytes at version v inside the window, one leaf at a
+// time. Caller holds db.mu.
 func (db *DB) readWindow(v, fo uint64, b []byte) {
-	n := uint64(len(b))
-	if n == 0 {
-		return
-	}
-	covered := make([]bool, len(b))
-	var seqs []int64
-	for l := fo / LeafSize; l <= (fo+n-1)/LeafSize; l++ {
-		p, ok := db.heads[uint32(l)]
-		for ok && p >= db.pieceBase {
-			pc := db.pieces[p-db.pieceBase]
-			if db.entries[pc.entry-db.entryBase].ver <= v {
-				break
-			}
-			seqs = append(seqs, pc.entry)
-			p = pc.prev
-		}
-	}
-	if fo/LeafSize != (fo+n-1)/LeafSize {
-		slices.Sort(seqs)
-		seqs = slices.Compact(seqs)
-		slices.Reverse(seqs)
-	}
-	for _, s := range seqs {
-		e := db.entries[s-db.entryBase]
-		lo, hi := max(e.off, fo), min(e.off+uint64(e.n), fo+n)
-		if lo < hi {
-			copy(b[lo-fo:hi-fo], e.c.m[e.pos+entryHdr+int64(lo-e.off):])
-			for i := lo - fo; i < hi-fo; i++ {
-				covered[i] = true
-			}
-		}
-	}
-	for i := 0; i < len(b); {
-		if covered[i] {
-			i++
-			continue
-		}
-		start := i
-		for i < len(b) && !covered[i] {
-			i++
-		}
-		copy(b[start:i], db.state[fo+uint64(start):fo+uint64(i)])
+	for pos := uint64(0); pos < uint64(len(b)); {
+		o := fo + pos
+		n := min(uint64(len(b))-pos, LeafSize-o%LeafSize)
+		db.readWindowRange(v, o/LeafSize, o%LeafSize, b[pos:pos+n])
+		pos += n
 	}
 }
 

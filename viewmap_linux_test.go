@@ -23,7 +23,7 @@ func TestUserfaultfd(t *testing.T) {
 	}
 	vw, _ := db.View(v)
 	defer vw.Close()
-	l, err := vw.loc(r)
+	l, err := vw.loc(r, false)
 	if err != nil {
 		t.Fatal(err)
 	}

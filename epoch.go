@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"sort"
@@ -331,37 +332,44 @@ func (db *DB) seal(c *chunk) error {
 }
 
 // readWindowRange reconstructs one leaf range with fixed auxiliary memory.
-// Caller holds db.mu. It reads mutable head bytes only if no later log covers them.
+// Caller holds db.mu. It reads mutable head bytes only if no later log covers
+// them, so a reader never races an owner's Touch-announced Map write.
 func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
-	var covered [LeafSize]bool
 	off := leaf*LeafSize + offset
 	end := off + uint64(len(out))
 	p, ok := db.heads[uint32(leaf)]
+	if !ok || p < db.pieceBase || db.entries[db.pieces[p-db.pieceBase].entry-db.entryBase].ver <= version {
+		copy(out, db.state[off:end])
+		return
+	}
+	var covered [LeafSize / 64]uint64 // bit i: out[i] came from an undo image
 	for ok && p >= db.pieceBase {
 		pc := db.pieces[p-db.pieceBase]
-		e := db.entries[pc.entry-db.entryBase]
+		e := &db.entries[pc.entry-db.entryBase]
 		if e.ver <= version {
 			break
 		}
 		lo, hi := max(e.off, off), min(e.off+uint64(e.n), end)
 		if lo < hi {
 			copy(out[lo-off:hi-off], e.c.m[e.pos+entryHdr+int64(lo-e.off):])
-			for i := lo - off; i < hi-off; i++ {
-				covered[i] = true
+			for i := lo - off; i < hi-off; {
+				n := min(hi-off-i, 64-i%64)
+				covered[i/64] |= ^uint64(0) >> (64 - n) << (i % 64)
+				i += n
 			}
 		}
 		p = pc.prev
 	}
 	for i := 0; i < len(out); {
-		if covered[i] {
-			i++
+		w := covered[i/64] >> (i % 64)
+		rest := 64 - i%64
+		if w&1 != 0 {
+			i += min(bits.TrailingZeros64(^w), rest)
 			continue
 		}
-		start := i
-		for i < len(out) && !covered[i] {
-			i++
-		}
-		copy(out[start:i], db.state[off+uint64(start):off+uint64(i)])
+		next := min(i+min(bits.TrailingZeros64(w), rest), len(out))
+		copy(out[i:next], db.state[off+uint64(i):off+uint64(next)])
+		i = next
 	}
 }
 
