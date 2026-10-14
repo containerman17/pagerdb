@@ -3,7 +3,6 @@ package pagerdb
 import (
 	"bufio"
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"github.com/klauspost/compress/zstd"
 	"io"
@@ -16,7 +15,8 @@ import (
 )
 
 // EpochStore holds sealed epoch files. Put and Delete must be durable when
-// they return. Open must return an immutable snapshot until its reader closes.
+// they return. Open must return an immutable snapshot until its reader closes,
+// and an error matching os.ErrNotExist when an epoch is absent.
 type EpochStore interface {
 	// Put publishes an epoch durably before returning.
 	Put(epoch uint64, r io.Reader) error
@@ -102,23 +102,28 @@ func (s *LocalStore) Open(epoch uint64) (io.ReaderAt, int64, error) {
 // Latest returns the highest stored epoch number, or zero.
 func (s *LocalStore) Latest() uint64 { return s.latest.Load() }
 
-// Epoch files use PGEPOCH2. The 64-byte header contains magic, epoch,
-// start, end, cumulative index count, index offset, root count, root offset.
-// Frames have a 16-byte header: flags u8, three zero bytes, stored payload
-// length u32, first version u64. Flag 1 is zstd, flag 0 is raw. The decoded
-// payload is a 1024-byte base followed by version-delta uvarint, offset u16,
-// length u16, and replacement bytes. Payloads never exceed 263168 bytes.
-// The sorted cumulative index has 24-byte records: leaf u32, frame count
-// u32, frame offset u64, latest changed epoch u64. Inherited records have
-// zero frame count and offset. Roots are sorted 40-byte (hash, version) rows.
-// All fixed-width integers are little endian.
+// PGEPOCH3 stores backward XOR changes. Header fields are seven little-endian
+// u64 values after the magic: epoch, checkpoint version, end version, cumulative
+// leaf count, index offset, root count, roots offset. Index rows are 48 bytes:
+// leaf u32, frames u32, directory offset u64, latest epoch u64, previous epoch
+// u64, dense offset u64, records u64. Inherited rows keep only leaf/latest epoch.
+// Dense rows are version relative to checkpoint u32, offset u16, length u16.
+// They are newest first, including reverse write order within one version.
+// Frame directories are offset u64, first record u64, count u32, flags u32.
+// Frame headers are flags u8, padding[3], stored length u32, decoded length u32,
+// count u32, first record u64, oldest relative version u32, newest version u32.
+// Payloads are dense-row headers followed by XOR bytes. A full run additionally
+// ends with the 1024-byte leaf after undoing that run. Flag bits are zstd=1 and
+// full-copy=2. Roots remain sorted (hash[32], version u64) records.
 const (
-	epochMagic = "PGEPOCH2"
-	epochHdr   = 64
-	frameHdr   = 16
-	frameCap   = 256 << 10
-	idxRec     = 24
-	rootRec    = 40
+	epochMagic  = "PGEPOCH3"
+	epochHdr    = 64
+	frameHdr    = 32
+	frameCap    = 256 << 10
+	idxRec      = 48
+	denseRec    = 8
+	frameDirRec = 24
+	rootRec     = 40
 )
 
 type sealedEpoch struct {
@@ -214,28 +219,29 @@ func (db *DB) Seal() error {
 	return db.sealErr
 }
 
-// seal sorts compact log references on disk, then streams bounded frames to a
-// temporary file. Only the current frame and merge buffers occupy heap memory.
+// seal sorts undo references on disk, then trims and writes newest-first XOR runs.
 func (db *DB) seal(c *chunk) error {
 	dir, err := os.MkdirTemp(db.dir, "seal-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	pieces, err := os.CreateTemp(dir, "pieces-")
+	create := func(name string) (*os.File, error) { return os.CreateTemp(dir, name) }
+	pieces, err := create("pieces-")
 	if err != nil {
 		return err
 	}
 	defer pieces.Close()
-	piecesWriter := bufio.NewWriterSize(pieces, 64<<10)
-	roots, err := os.CreateTemp(dir, "roots-")
+	roots, err := create("roots-")
 	if err != nil {
 		return err
 	}
 	defer roots.Close()
-	rootsWriter := bufio.NewWriterSize(roots, 64<<10)
-	root := le.AppendUint64(append([]byte(nil), c.m[16:48]...), c.start)
-	if _, err = rootsWriter.Write(root); err != nil {
+	pw, rw := bufio.NewWriterSize(pieces, 64<<10), bufio.NewWriterSize(roots, 64<<10)
+	var rr [rootRec]byte
+	copy(rr[:32], c.m[16:48])
+	le.PutUint64(rr[32:], c.start)
+	if _, err = rw.Write(rr[:]); err != nil {
 		return err
 	}
 	end, nRoots := c.start, uint64(1)
@@ -244,16 +250,20 @@ func (db *DB) seal(c *chunk) error {
 		switch r[0] {
 		case 'E':
 			n, ver, fo := uint64(le.Uint32(r[8:])), le.Uint64(r[16:]), le.Uint64(r[24:])
+			if ver <= c.start || ver-c.start > uint64(^uint32(0)) {
+				return fmt.Errorf("pagerdb: epoch version span exceeds uint32; reduce EpochVersions")
+			}
 			for p := uint64(0); p < n; {
-				o := fo + p
-				k := min(n-p, LeafSize-o%LeafSize)
+				at := fo + p
+				k := min(n-p, LeafSize-at%LeafSize)
+				oldAt := uint64(pos) + entryHdr + p
 				var rec [40]byte
-				for i, v := range []uint64{o / LeafSize, uint64(pos) + p, ver, uint64(pos) + entryHdr + n + p} {
+				for i, v := range []uint64{at / LeafSize, uint64(pos) + p, ver, oldAt} {
 					le.PutUint64(rec[i*8:], v)
 				}
-				le.PutUint16(rec[32:], uint16(o%LeafSize))
+				le.PutUint16(rec[32:], uint16(at%LeafSize))
 				le.PutUint16(rec[34:], uint16(k))
-				if _, err = piecesWriter.Write(rec[:]); err != nil {
+				if _, err = pw.Write(rec[:]); err != nil {
 					return err
 				}
 				p += k
@@ -261,34 +271,43 @@ func (db *DB) seal(c *chunk) error {
 			pos += entryHdr + 2*int64(n)
 		case 'B':
 			end = le.Uint64(r[8:])
-			root = le.AppendUint64(append(root[:0], r[16:48]...), end)
-			if _, err = rootsWriter.Write(root); err != nil {
+			if end < c.start || end-c.start > uint64(^uint32(0)) {
+				return fmt.Errorf("pagerdb: epoch version span exceeds uint32; reduce EpochVersions")
+			}
+			copy(rr[:32], r[16:48])
+			le.PutUint64(rr[32:], end)
+			if _, err = rw.Write(rr[:]); err != nil {
 				return err
 			}
 			nRoots++
 			pos += blockRec
 		default:
-			return fmt.Errorf("bad record at %d", pos)
+			return fmt.Errorf("pagerdb: invalid log record while sealing")
 		}
 	}
-	if err = piecesWriter.Flush(); err != nil {
+	if err = pw.Flush(); err != nil {
 		return err
 	}
-	if err = rootsWriter.Flush(); err != nil {
+	if err = rw.Flush(); err != nil {
 		return err
 	}
-	sorted, err := diskSort(dir, pieces, 40, pieceLess)
+	sorted, err := diskSort(dir, pieces, 40, func(a, b []byte) bool {
+		if le.Uint64(a) != le.Uint64(b) {
+			return le.Uint64(a) < le.Uint64(b)
+		}
+		return le.Uint64(a[8:]) > le.Uint64(b[8:])
+	})
 	if err != nil {
 		return err
 	}
 	defer sorted.Close()
-	sortedReader := bufio.NewReaderSize(sorted, 64<<10)
+	sr := bufio.NewReaderSize(sorted, 64<<10)
 	sortedRoots, err := diskSort(dir, roots, rootRec, rootLess)
 	if err != nil {
 		return err
 	}
 	defer sortedRoots.Close()
-	out, err := os.CreateTemp(dir, "epoch-")
+	out, err := create("epoch-")
 	if err != nil {
 		return err
 	}
@@ -296,26 +315,39 @@ func (db *DB) seal(c *chunk) error {
 	if _, err = out.Write(make([]byte, epochHdr)); err != nil {
 		return err
 	}
-	index, err := os.CreateTemp(dir, "index-")
+	index, err := create("index-")
 	if err != nil {
 		return err
 	}
 	defer index.Close()
-	indexWriter := bufio.NewWriterSize(index, 64<<10)
+	iw := bufio.NewWriterSize(index, 64<<10)
+	dense, err := create("dense-")
+	if err != nil {
+		return err
+	}
+	defer dense.Close()
+	dw := bufio.NewWriterSize(dense, 64<<10)
+	dirs, err := create("directories-")
+	if err != nil {
+		return err
+	}
+	defer dirs.Close()
+	fw := bufio.NewWriterSize(dirs, 64<<10)
 	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
 	if err != nil {
 		return err
 	}
 	defer enc.Close()
-	var rec [40]byte
-	_, readErr := io.ReadFull(sortedReader, rec[:])
-	var previous *sealedEpoch
 	db.mu.Lock()
+	var previous *sealedEpoch
 	if len(db.sealed) > 0 {
 		previous = db.sealed[len(db.sealed)-1]
 	}
 	db.mu.Unlock()
-	oldAt, nLeaves := uint64(0), uint64(0)
+	if previous != nil && previous.end != c.start {
+		return fmt.Errorf("pagerdb: epoch checkpoint discontinuity")
+	}
+	oldAt, nLeaves, dirBytes, denseBytes := uint64(0), uint64(0), uint64(0), uint64(0)
 	copyOld := func(until uint64) error {
 		if previous == nil {
 			return nil
@@ -329,7 +361,8 @@ func (db *DB) seal(c *chunk) error {
 				break
 			}
 			clear(r[4:16])
-			if _, e = indexWriter.Write(r[:]); e != nil {
+			clear(r[24:])
+			if _, e = iw.Write(r[:]); e != nil {
 				return e
 			}
 			oldAt++
@@ -337,82 +370,151 @@ func (db *DB) seal(c *chunk) error {
 		}
 		return nil
 	}
-	base := make([]byte, LeafSize)
-	payload := make([]byte, 0, LeafSize+frameCap)
-	compressed := make([]byte, 0, LeafSize+frameCap)
+	payload := make([]byte, 0, frameCap+LeafSize)
+	compressed := make([]byte, 0, frameCap+LeafSize)
+	var rec [40]byte
+	_, readErr := io.ReadFull(sr, rec[:])
 	for readErr == nil {
 		leaf := le.Uint64(rec[:])
 		if err = copyOld(leaf); err != nil {
 			return err
 		}
-		lastChanged := uint64(0)
+		prior := uint64(0)
+		var inherited [idxRec]byte
 		if previous != nil && oldAt < previous.nLeaves {
 			r, e := previous.indexRecord(oldAt)
 			if e != nil {
 				return e
 			}
 			if uint64(le.Uint32(r[:])) == leaf {
-				lastChanged = le.Uint64(r[16:])
+				prior = le.Uint64(r[16:])
+				inherited = r
 				oldAt++
 			}
 		}
-		if previous != nil && previous.end != c.start {
-			return fmt.Errorf("pagerdb: seal checkpoint does not follow previous epoch")
-		}
-		if err = db.sealBaseLeaf(lastChanged, leaf, c.start, base); err != nil {
-			return err
-		}
-		off, _ := out.Seek(0, io.SeekCurrent)
-		frames := uint32(0)
-		payload = append(payload[:0], base...)
-		first, prev := le.Uint64(rec[16:]), le.Uint64(rec[16:])
-		flush := func() error {
-			var h [frameHdr]byte
-			body := payload
+		leafDir, leafDense := dirBytes, denseBytes
+		frames, count, firstIndex := uint32(0), uint64(0), uint64(0)
+		runCount, newest, oldest := uint32(0), uint32(0), uint32(0)
+		var boundary, delta [LeafSize]byte
+		// Touch captures its final new bytes at Commit and can overlap later
+		// writes. Reconstruct the epoch-end leaf once, then derive each write's
+		// actual undo delta from the next newer state instead of stale new data.
+		db.mu.Lock()
+		db.readWindowRange(end, leaf, 0, boundary[:])
+		db.mu.Unlock()
+		payload = payload[:0]
+		flush := func(full bool) error {
+			if runCount == 0 {
+				return nil
+			}
+			flags := byte(0)
+			if full {
+				payload = append(payload, boundary[:]...)
+				flags |= 2
+			}
+			rawLen := len(payload)
 			compressed = enc.EncodeAll(payload, compressed[:0])
+			body := payload
 			if len(compressed)*10 <= len(payload)*9 {
 				body = compressed
-				h[0] = 1
+				flags |= 1
 			}
-			le.PutUint32(h[4:], uint32(len(body)))
-			le.PutUint64(h[8:], first)
-			if _, e := out.Write(h[:]); e != nil {
+			off, e := out.Seek(0, io.SeekCurrent)
+			if e != nil {
 				return e
 			}
-			_, e := out.Write(body)
+			var h [frameHdr]byte
+			h[0] = flags
+			le.PutUint32(h[4:], uint32(len(body)))
+			le.PutUint32(h[8:], uint32(rawLen))
+			le.PutUint32(h[12:], runCount)
+			le.PutUint64(h[16:], firstIndex)
+			le.PutUint32(h[24:], oldest)
+			le.PutUint32(h[28:], newest)
+			if _, e = out.Write(h[:]); e != nil {
+				return e
+			}
+			if _, e = out.Write(body); e != nil {
+				return e
+			}
+			var dr [frameDirRec]byte
+			le.PutUint64(dr[:], uint64(off))
+			le.PutUint64(dr[8:], firstIndex)
+			le.PutUint32(dr[16:], runCount)
+			le.PutUint32(dr[20:], uint32(flags))
+			if _, e = fw.Write(dr[:]); e != nil {
+				return e
+			}
+			dirBytes += frameDirRec
 			frames++
-			return e
+			firstIndex = count
+			runCount = 0
+			payload = payload[:0]
+			return nil
 		}
 		for readErr == nil && le.Uint64(rec[:]) == leaf {
-			ver, at := le.Uint64(rec[16:]), le.Uint64(rec[24:])
-			o, k := le.Uint16(rec[32:]), le.Uint16(rec[34:])
-			var tmp [14]byte
-			n := binary.PutUvarint(tmp[:], ver-prev)
-			if len(payload)+n+4+int(k) > LeafSize+frameCap {
-				if err = flush(); err != nil {
+			ver := uint32(le.Uint64(rec[16:]) - c.start)
+			oldAt := le.Uint64(rec[24:])
+			off, n := uint64(le.Uint16(rec[32:])), uint64(le.Uint16(rec[34:]))
+			for i := uint64(0); i < n; i++ {
+				delta[i] = boundary[off+i] ^ c.m[oldAt+i]
+			}
+			lo, hi := uint64(0), n
+			for lo < hi && delta[lo] == 0 {
+				lo++
+			}
+			for hi > lo && delta[hi-1] == 0 {
+				hi--
+			}
+			if lo < hi {
+				if len(payload)+denseRec+int(hi-lo) > frameCap {
+					if err = flush(true); err != nil {
+						return err
+					}
+				}
+				var row [denseRec]byte
+				le.PutUint32(row[:], ver)
+				le.PutUint16(row[4:], uint16(off+lo))
+				le.PutUint16(row[6:], uint16(hi-lo))
+				if _, err = dw.Write(row[:]); err != nil {
 					return err
 				}
-				payload = append(payload[:0], base...)
-				first = ver
-				n = binary.PutUvarint(tmp[:], 0)
+				denseBytes += denseRec
+				if runCount == 0 {
+					newest = ver
+				}
+				oldest = ver
+				payload = append(payload, row[:]...)
+				payload = append(payload, delta[lo:hi]...)
+				count++
+				runCount++
 			}
-			le.PutUint16(tmp[n:], o)
-			le.PutUint16(tmp[n+2:], k)
-			payload = append(payload, tmp[:n+4]...)
-			payload = append(payload, c.m[at:at+uint64(k)]...)
-			copy(base[o:], c.m[at:at+uint64(k)])
-			prev = ver
-			_, readErr = io.ReadFull(sortedReader, rec[:])
+			copy(boundary[off:off+n], c.m[oldAt:oldAt+n])
+			_, readErr = io.ReadFull(sr, rec[:])
 		}
-		if err = flush(); err != nil {
+		if err = flush(len(payload) >= frameCap); err != nil {
 			return err
 		}
-		var ir [idxRec]byte
-		le.PutUint32(ir[:], uint32(leaf))
-		le.PutUint32(ir[4:], frames)
-		le.PutUint64(ir[8:], uint64(off))
-		le.PutUint64(ir[16:], c.epoch)
-		if _, err = indexWriter.Write(ir[:]); err != nil {
+		if count == 0 {
+			if prior != 0 {
+				clear(inherited[4:16])
+				clear(inherited[24:])
+				if _, err = iw.Write(inherited[:]); err != nil {
+					return err
+				}
+				nLeaves++
+			}
+			continue
+		}
+		var row [idxRec]byte
+		le.PutUint32(row[:], uint32(leaf))
+		le.PutUint32(row[4:], frames)
+		le.PutUint64(row[8:], leafDir)
+		le.PutUint64(row[16:], c.epoch)
+		le.PutUint64(row[24:], prior)
+		le.PutUint64(row[32:], leafDense)
+		le.PutUint64(row[40:], count)
+		if _, err = iw.Write(row[:]); err != nil {
 			return err
 		}
 		nLeaves++
@@ -423,12 +525,48 @@ func (db *DB) seal(c *chunk) error {
 	if err = copyOld(^uint64(0)); err != nil {
 		return err
 	}
-	if err = indexWriter.Flush(); err != nil {
+	for _, w := range []*bufio.Writer{iw, dw, fw} {
+		if err = w.Flush(); err != nil {
+			return err
+		}
+	}
+	dirBase, err := out.Seek(0, io.SeekCurrent)
+	if err != nil {
 		return err
 	}
-	indexOff, _ := out.Seek(0, io.SeekCurrent)
+	dirs.Seek(0, 0)
+	if _, err = io.Copy(out, dirs); err != nil {
+		return err
+	}
+	denseBase, err := out.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	dense.Seek(0, 0)
+	if _, err = io.Copy(out, dense); err != nil {
+		return err
+	}
+	indexOff, err := out.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
 	index.Seek(0, 0)
-	if _, err = io.Copy(out, index); err != nil {
+	ir := bufio.NewReaderSize(index, 64<<10)
+	ow := bufio.NewWriterSize(out, 64<<10)
+	for i := uint64(0); i < nLeaves; i++ {
+		var r [idxRec]byte
+		if _, err = io.ReadFull(ir, r[:]); err != nil {
+			return err
+		}
+		if le.Uint32(r[4:]) != 0 {
+			le.PutUint64(r[8:], le.Uint64(r[8:])+uint64(dirBase))
+			le.PutUint64(r[32:], le.Uint64(r[32:])+uint64(denseBase))
+		}
+		if _, err = ow.Write(r[:]); err != nil {
+			return err
+		}
+	}
+	if err = ow.Flush(); err != nil {
 		return err
 	}
 	rootsOff, _ := out.Seek(0, io.SeekCurrent)
@@ -438,7 +576,7 @@ func (db *DB) seal(c *chunk) error {
 	var h [epochHdr]byte
 	copy(h[:], epochMagic)
 	for i, v := range []uint64{c.epoch, c.start, end, nLeaves, uint64(indexOff), nRoots, uint64(rootsOff)} {
-		le.PutUint64(h[8+8*i:], v)
+		le.PutUint64(h[8+i*8:], v)
 	}
 	if _, err = out.WriteAt(h[:], 0); err != nil {
 		return err
@@ -447,76 +585,51 @@ func (db *DB) seal(c *chunk) error {
 	if err = db.o.Store.Put(c.epoch, out); err != nil {
 		return err
 	}
-	s, err := db.openSealed(c.epoch)
+	sealed, err := db.openSealed(c.epoch)
 	if err != nil {
 		return err
 	}
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	db.sealed = append(db.sealed, s)
+	db.sealed = append(db.sealed, sealed)
 	c.sealed = true
 	db.dropChunks()
 	return nil
 }
 
-// sealBaseLeaf uses the previous cumulative index's last-change epoch. The
-// leaf at that epoch's end remains unchanged through the sealing checkpoint.
-// A leaf absent from all sealed indexes still needs the live-log/genesis base.
-func (db *DB) sealBaseLeaf(lastChanged, leaf, version uint64, out []byte) error {
-	db.mu.Lock()
-	if lastChanged == 0 {
-		// The existing per-leaf chain is already newest first. Applying old
-		// bytes directly avoids an epoch-sized temporary sequence slice.
-		var covered [LeafSize]bool
-		off := leaf * LeafSize
-		p, ok := db.heads[uint32(leaf)]
-		for ok && p >= db.pieceBase {
-			piece := db.pieces[p-db.pieceBase]
-			entry := db.entries[piece.entry-db.entryBase]
-			if entry.ver <= version {
-				break
-			}
-			lo, hi := max(entry.off, off), min(entry.off+uint64(entry.n), off+LeafSize)
-			copy(out[lo-off:hi-off], entry.c.m[entry.pos+entryHdr+int64(lo-entry.off):])
+// readWindowRange reconstructs one leaf range with fixed auxiliary memory.
+// Caller holds db.mu. It reads mutable head bytes only if no later log covers them.
+func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
+	var covered [LeafSize]bool
+	off := leaf*LeafSize + offset
+	end := off + uint64(len(out))
+	p, ok := db.heads[uint32(leaf)]
+	for ok && p >= db.pieceBase {
+		pc := db.pieces[p-db.pieceBase]
+		e := db.entries[pc.entry-db.entryBase]
+		if e.ver <= version {
+			break
+		}
+		lo, hi := max(e.off, off), min(e.off+uint64(e.n), end)
+		if lo < hi {
+			copy(out[lo-off:hi-off], e.c.m[e.pos+entryHdr+int64(lo-e.off):])
 			for i := lo - off; i < hi-off; i++ {
 				covered[i] = true
 			}
-			p = piece.prev
 		}
-		// Bytes covered by a later log entry are never read from the live
-		// mapping, where the owner can write concurrently through Map.
-		for i := 0; i < LeafSize; {
-			if covered[i] {
-				i++
-				continue
-			}
-			start := i
-			for i < LeafSize && !covered[i] {
-				i++
-			}
-			copy(out[start:i], db.state[off+uint64(start):off+uint64(i)])
+		p = pc.prev
+	}
+	for i := 0; i < len(out); {
+		if covered[i] {
+			i++
+			continue
 		}
-		db.mu.Unlock()
-		return nil
+		start := i
+		for i < len(out) && !covered[i] {
+			i++
+		}
+		copy(out[start:i], db.state[off+uint64(start):off+uint64(i)])
 	}
-	i := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].epoch >= lastChanged })
-	if i == len(db.sealed) || db.sealed[i].epoch != lastChanged {
-		db.mu.Unlock()
-		return fmt.Errorf("pagerdb: sealed base epoch %d missing", lastChanged)
-	}
-	previous := db.sealed[i]
-	db.mu.Unlock()
-	if previous.end > version {
-		return fmt.Errorf("pagerdb: sealed base follows checkpoint")
-	}
-	found, err := previous.leaf(leaf, version, out)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return fmt.Errorf("pagerdb: leaf %d missing from sealed base epoch %d", leaf, lastChanged)
-	}
-	return nil
 }
 
 func (db *DB) openSealed(epoch uint64) (*sealedEpoch, error) {
@@ -542,7 +655,7 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 		return nil, fmt.Errorf("pagerdb: epoch %d: bad header", epoch)
 	}
 	s := &sealedEpoch{epoch: epoch, start: le.Uint64(h[16:]), end: le.Uint64(h[24:]), ra: ra, size: size, nLeaves: le.Uint64(h[32:]), indexOff: le.Uint64(h[40:]), nRoots: le.Uint64(h[48:]), rootsOff: le.Uint64(h[56:])}
-	if size < epochHdr || s.start > s.end || s.end-s.start == ^uint64(0) || s.nRoots != s.end-s.start+1 || s.indexOff < epochHdr || s.indexOff > uint64(size) || s.nLeaves > (uint64(size)-s.indexOff)/idxRec || s.rootsOff != s.indexOff+s.nLeaves*idxRec || s.rootsOff > uint64(size) || s.nRoots > (uint64(size)-s.rootsOff)/rootRec || s.rootsOff+s.nRoots*rootRec != uint64(size) {
+	if size < epochHdr || s.start > s.end || s.end-s.start > uint64(^uint32(0)) || s.nRoots != s.end-s.start+1 || s.indexOff < epochHdr || s.indexOff > uint64(size) || s.nLeaves > (uint64(size)-s.indexOff)/idxRec || s.rootsOff != s.indexOff+s.nLeaves*idxRec || s.rootsOff > uint64(size) || s.nRoots > (uint64(size)-s.rootsOff)/rootRec || s.rootsOff+s.nRoots*rootRec != uint64(size) {
 		return nil, fmt.Errorf("pagerdb: epoch %d: invalid bounds", epoch)
 	}
 	var prevLeaf uint32
@@ -551,11 +664,41 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 		if e != nil {
 			return nil, e
 		}
-		leaf, frames, off, last := le.Uint32(r[:]), le.Uint32(r[4:]), le.Uint64(r[8:]), le.Uint64(r[16:])
-		if i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || frames == 0 && (off != 0 || last == epoch) || frames > 0 && (last != epoch || off < epochHdr || off >= s.indexOff || uint64(frames) > (s.indexOff-off)/frameHdr) {
-			return nil, fmt.Errorf("pagerdb: epoch %d: invalid index record %d", epoch, i)
+		leaf, frames, dir, last, prior, dense, n := le.Uint32(r[:]), le.Uint32(r[4:]), le.Uint64(r[8:]), le.Uint64(r[16:]), le.Uint64(r[24:]), le.Uint64(r[32:]), le.Uint64(r[40:])
+		if i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || frames == 0 && (dir != 0 || last == epoch || prior != 0 || dense != 0 || n != 0) || frames > 0 && (last != epoch || prior >= epoch || n == 0 || dir < epochHdr || dir > s.indexOff || uint64(frames) > (s.indexOff-dir)/frameDirRec || dense < epochHdr || dense > s.indexOff || n > (s.indexOff-dense)/denseRec) {
+			return nil, fmt.Errorf("pagerdb: epoch %d: invalid cumulative index", epoch)
 		}
 		prevLeaf = leaf
+		if frames == 0 {
+			continue
+		}
+		expected := uint64(0)
+		for j := uint32(0); j < frames; j++ {
+			d, e := s.frameRecord(r, j)
+			if e != nil {
+				return nil, e
+			}
+			at, first, count, flags := le.Uint64(d[:]), le.Uint64(d[8:]), le.Uint32(d[16:]), le.Uint32(d[20:])
+			if at < epochHdr || at > s.indexOff || s.indexOff-at < frameHdr || first != expected || count == 0 || uint64(count) > n-expected || flags > 3 || j+1 < frames && flags&2 == 0 {
+				return nil, fmt.Errorf("pagerdb: invalid XOR frame directory")
+			}
+			expected += uint64(count)
+		}
+		if expected != n {
+			return nil, fmt.Errorf("pagerdb: XOR directory count mismatch")
+		}
+		prev := ^uint32(0)
+		for j := uint64(0); j < n; j++ {
+			d, e := s.denseRecord(r, j)
+			if e != nil {
+				return nil, e
+			}
+			v, o, k := le.Uint32(d[:]), uint64(le.Uint16(d[4:])), uint64(le.Uint16(d[6:]))
+			if v == 0 || uint64(v) > s.end-s.start || v > prev || k == 0 || o+k > LeafSize {
+				return nil, fmt.Errorf("pagerdb: invalid dense XOR index")
+			}
+			prev = v
+		}
 	}
 	var prevRoot [32]byte
 	for i := uint64(0); i < s.nRoots; i++ {
@@ -582,34 +725,40 @@ var epochIndexCache struct {
 	}
 }
 
+func (s *sealedEpoch) readSmall(at uint64, out []byte) error {
+	if at > uint64(s.size) || uint64(len(out)) > uint64(s.size)-at {
+		return io.ErrUnexpectedEOF
+	}
+	epochIndexCache.Lock()
+	defer epochIndexCache.Unlock()
+	for len(out) > 0 {
+		page, within := at/4096, at%4096
+		slot := &epochIndexCache.slots[(page+s.epoch*17)%uint64(len(epochIndexCache.slots))]
+		if slot.owner != s || slot.at != page {
+			slot.owner = nil
+			n := min(uint64(len(slot.bytes)), uint64(s.size)-page*4096)
+			if _, err := s.ra.ReadAt(slot.bytes[:n], int64(page*4096)); err != nil {
+				return err
+			}
+			slot.owner = s
+			slot.at = page
+		}
+		n := min(len(out), 4096-int(within))
+		copy(out[:n], slot.bytes[within:within+uint64(n)])
+		out = out[n:]
+		at += uint64(n)
+	}
+	return nil
+}
 func (s *sealedEpoch) indexRecord(i uint64) ([idxRec]byte, error) {
 	var r [idxRec]byte
 	if i >= s.nLeaves {
 		return r, fmt.Errorf("pagerdb: epoch index out of bounds")
 	}
-	epochIndexCache.Lock()
-	defer epochIndexCache.Unlock()
-	at := i * idxRec
-	for done := 0; done < idxRec; {
-		page := at / 4096
-		within := at % 4096
-		slot := &epochIndexCache.slots[(page+s.epoch*17)%uint64(len(epochIndexCache.slots))]
-		if slot.owner != s || slot.at != page {
-			slot.owner = nil
-			n := min(uint64(len(slot.bytes)), s.nLeaves*idxRec-page*4096)
-			if _, err := s.ra.ReadAt(slot.bytes[:n], int64(s.indexOff+page*4096)); err != nil {
-				return r, err
-			}
-			slot.owner = s
-			slot.at = page
-		}
-		n := min(idxRec-done, 4096-int(within))
-		copy(r[done:done+n], slot.bytes[within:within+uint64(n)])
-		done += n
-		at += uint64(n)
-	}
-	return r, nil
+	err := s.readSmall(s.indexOff+i*idxRec, r[:])
+	return r, err
 }
+
 func (s *sealedEpoch) lookup(leaf uint64) ([idxRec]byte, bool, error) {
 	lo, hi := uint64(0), s.nLeaves
 	for lo < hi {
@@ -637,66 +786,34 @@ func (db *DB) loadSealed() error {
 	for e := uint64(1); e <= db.o.Store.Latest(); e++ {
 		s, err := db.openSealed(e)
 		if err != nil {
+			if len(db.sealed) == 0 && os.IsNotExist(err) {
+				continue
+			}
 			return err
+		}
+		if len(db.sealed) > 0 && db.sealed[len(db.sealed)-1].end != s.start {
+			if c, ok := s.ra.(io.Closer); ok {
+				c.Close()
+			}
+			return fmt.Errorf("pagerdb: sealed epoch checkpoint gap")
 		}
 		db.sealed = append(db.sealed, s)
 	}
 	return nil
 }
 
-// leaf writes the leaf at version v into out if the leaf changed in this epoch. The frame is
-// the last one starting at or before v (or the first); its entries up to v are applied.
-func (s *sealedEpoch) leaf(leaf, v uint64, out []byte) (bool, error) {
-	r, ok, err := s.lookup(leaf)
-	if err != nil || !ok {
-		return ok, err
+// decodeXORFrame validates one bounded raw or compressed backward run.
+func decodeXORFrame(h, body []byte) ([]byte, error) {
+	if len(h) != frameHdr || h[0] > 3 || h[1] != 0 || h[2] != 0 || h[3] != 0 || len(body) != int(le.Uint32(h[4:])) || len(body) > frameCap+LeafSize {
+		return nil, fmt.Errorf("pagerdb: invalid XOR frame header")
 	}
-	frames, off := le.Uint32(r[4:]), le.Uint64(r[8:])
-	if frames == 0 {
-		return false, nil
+	raw, count := le.Uint32(h[8:]), le.Uint32(h[12:])
+	if raw > frameCap+LeafSize || count == 0 || count > frameCap/(denseRec+1) {
+		return nil, fmt.Errorf("pagerdb: invalid XOR frame bounds")
 	}
-	var h [frameHdr]byte
-	at := off
-	for f := uint32(0); f < frames; f++ {
-		if off < epochHdr || off > s.indexOff || s.indexOff-off < frameHdr {
-			return true, fmt.Errorf("pagerdb: invalid frame offset")
-		}
-		if _, err = s.ra.ReadAt(h[:], int64(off)); err != nil {
-			return true, err
-		}
-		if le.Uint64(h[8:]) > v && f > 0 {
-			break
-		}
-		at = off
-		sz := uint64(le.Uint32(h[4:]))
-		if sz > LeafSize+frameCap || sz > s.indexOff-off-frameHdr {
-			return true, fmt.Errorf("pagerdb: invalid frame size")
-		}
-		off += frameHdr + sz
-	}
-	if _, err = s.ra.ReadAt(h[:], int64(at)); err != nil {
-		return true, err
-	}
-	body := make([]byte, le.Uint32(h[4:]))
-	if _, err = s.ra.ReadAt(body, int64(at)+frameHdr); err != nil {
-		return true, err
-	}
-	return true, decodeFrame(h[:], body, v, out)
-}
-
-// A shared decoder bounds retained decoder memory, including concurrent views.
-var frameDecoder struct {
-	sync.Mutex
-	dec *zstd.Decoder
-}
-
-func decodeFrame(h, body []byte, v uint64, out []byte) error {
-	if len(h) != frameHdr || len(out) < LeafSize || h[0] > 1 || h[1] != 0 || h[2] != 0 || h[3] != 0 || len(body) != int(le.Uint32(h[4:])) || len(body) > LeafSize+frameCap {
-		return fmt.Errorf("pagerdb: invalid frame header")
-	}
-	if h[0] == 1 {
-		var err error
+	if h[0]&1 != 0 {
 		frameDecoder.Lock()
+		var err error
 		if frameDecoder.dec == nil {
 			frameDecoder.dec, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(2<<20), zstd.WithDecoderMaxWindow(1<<20))
 		}
@@ -705,29 +822,261 @@ func decodeFrame(h, body []byte, v uint64, out []byte) error {
 		}
 		frameDecoder.Unlock()
 		if err != nil {
-			return fmt.Errorf("pagerdb: invalid compressed frame: %w", err)
+			return nil, fmt.Errorf("pagerdb: invalid compressed XOR frame: %w", err)
 		}
 	}
-	if len(body) < LeafSize || len(body) > LeafSize+frameCap {
-		return fmt.Errorf("pagerdb: invalid frame payload")
+	if len(body) != int(raw) {
+		return nil, fmt.Errorf("pagerdb: XOR decoded size mismatch")
 	}
-	copy(out, body[:LeafSize])
-	ver := le.Uint64(h[8:])
-	for p := LeafSize; p < len(body); {
-		d, k := binary.Uvarint(body[p:])
-		if k <= 0 || d > ^uint64(0)-ver || len(body)-p-k < 4 {
-			return fmt.Errorf("pagerdb: invalid frame version")
+	records := len(body)
+	if h[0]&2 != 0 {
+		records -= LeafSize
+		if records < frameCap-(denseRec+LeafSize)+1 {
+			return nil, fmt.Errorf("pagerdb: premature run copy")
 		}
-		ver += d
-		o, n := int(le.Uint16(body[p+k:])), int(le.Uint16(body[p+k+2:]))
-		p += k + 4
-		if n == 0 || o+n > LeafSize || n > len(body)-p {
-			return fmt.Errorf("pagerdb: invalid frame entry bounds")
+	}
+	if records < 0 || records > frameCap {
+		return nil, fmt.Errorf("pagerdb: XOR record size")
+	}
+	p, prev := 0, ^uint32(0)
+	for i := uint32(0); i < count; i++ {
+		if records-p < denseRec {
+			return nil, fmt.Errorf("pagerdb: truncated XOR record")
 		}
-		if ver <= v {
-			copy(out[o:o+n], body[p:p+n])
+		ver, off, n := le.Uint32(body[p:]), int(le.Uint16(body[p+4:])), int(le.Uint16(body[p+6:]))
+		p += denseRec
+		if ver == 0 || ver > prev || n == 0 || off+n > LeafSize || n > records-p || body[p] == 0 || body[p+n-1] == 0 {
+			return nil, fmt.Errorf("pagerdb: invalid XOR record")
 		}
+		if i == 0 && ver != le.Uint32(h[28:]) {
+			return nil, fmt.Errorf("pagerdb: invalid newest XOR version")
+		}
+		prev = ver
 		p += n
+	}
+	if p != records || prev != le.Uint32(h[24:]) {
+		return nil, fmt.Errorf("pagerdb: invalid XOR frame end")
+	}
+	return body, nil
+}
+
+var frameDecoder struct {
+	sync.Mutex
+	dec *zstd.Decoder
+}
+
+func applyXORRecords(body []byte, count uint32, threshold uint32, offset uint64, out []byte) error {
+	p := 0
+	for i := uint32(0); i < count; i++ {
+		if len(body)-p < denseRec {
+			return fmt.Errorf("pagerdb: truncated XOR record")
+		}
+		ver, off, n := le.Uint32(body[p:]), uint64(le.Uint16(body[p+4:])), uint64(le.Uint16(body[p+6:]))
+		p += denseRec
+		if n == 0 || off+n > LeafSize || n > uint64(len(body)-p) {
+			return fmt.Errorf("pagerdb: invalid XOR range")
+		}
+		if ver > threshold {
+			lo, hi := max(off, offset), min(off+n, offset+uint64(len(out)))
+			for j := lo; j < hi; j++ {
+				out[j-offset] ^= body[p+int(j-off)]
+			}
+		}
+		p += int(n)
+	}
+	return nil
+}
+
+func (s *sealedEpoch) denseRecord(row [idxRec]byte, i uint64) ([denseRec]byte, error) {
+	var r [denseRec]byte
+	if i >= le.Uint64(row[40:]) {
+		return r, fmt.Errorf("pagerdb: dense index out of bounds")
+	}
+	err := s.readSmall(le.Uint64(row[32:])+i*denseRec, r[:])
+	return r, err
+}
+func (s *sealedEpoch) frameRecord(row [idxRec]byte, i uint32) ([frameDirRec]byte, error) {
+	var r [frameDirRec]byte
+	if i >= le.Uint32(row[4:]) {
+		return r, fmt.Errorf("pagerdb: frame directory out of bounds")
+	}
+	err := s.readSmall(le.Uint64(row[8:])+uint64(i)*frameDirRec, r[:])
+	return r, err
+}
+func (s *sealedEpoch) readFrame(dir [frameDirRec]byte) ([frameHdr]byte, []byte, error) {
+	var h [frameHdr]byte
+	off := le.Uint64(dir[:])
+	if off < epochHdr || off > s.indexOff || s.indexOff-off < frameHdr {
+		return h, nil, fmt.Errorf("pagerdb: frame offset out of bounds")
+	}
+	if err := s.readSmall(off, h[:]); err != nil {
+		return h, nil, err
+	}
+	n := uint64(le.Uint32(h[4:]))
+	if n > frameCap+LeafSize || n > s.indexOff-off-frameHdr {
+		return h, nil, fmt.Errorf("pagerdb: frame payload out of bounds")
+	}
+	if le.Uint64(h[16:]) != le.Uint64(dir[8:]) || le.Uint32(h[12:]) != le.Uint32(dir[16:]) || uint32(h[0]) != le.Uint32(dir[20:]) {
+		return h, nil, fmt.Errorf("pagerdb: frame directory mismatch")
+	}
+	body := make([]byte, n)
+	if _, err := s.ra.ReadAt(body, int64(off)+frameHdr); err != nil {
+		return h, nil, err
+	}
+	body, err := decodeXORFrame(h[:], body)
+	return h, body, err
+}
+
+// undoLeaf checks dense range metadata before loading any XOR payload. A complete
+// run copy newer than the target replaces all earlier runs in this epoch.
+func (s *sealedEpoch) undoLeaf(row [idxRec]byte, v, offset uint64, out []byte) error {
+	threshold := uint32(0)
+	if v >= s.end {
+		return nil
+	}
+	if v >= s.start {
+		threshold = uint32(v - s.start)
+	}
+	n := le.Uint64(row[40:])
+	lo, hi := uint64(0), n
+	for lo < hi {
+		m := lo + (hi-lo)/2
+		r, e := s.denseRecord(row, m)
+		if e != nil {
+			return e
+		}
+		if le.Uint32(r[:]) > threshold {
+			lo = m + 1
+		} else {
+			hi = m
+		}
+	}
+	stop := lo
+	if stop == 0 {
+		return nil
+	}
+	overlap := false
+	for i := uint64(0); i < stop; i++ {
+		r, e := s.denseRecord(row, i)
+		if e != nil {
+			return e
+		}
+		a, b := uint64(le.Uint16(r[4:])), uint64(le.Uint16(r[6:]))
+		if a < offset+uint64(len(out)) && a+b > offset {
+			overlap = true
+			break
+		}
+	}
+	if !overlap {
+		return nil
+	}
+	// Find the final complete run wholly newer than the target. Every non-final
+	// run ends in a copy, so this is the nearest usable copy within this epoch.
+	frames := le.Uint32(row[4:])
+	fl, fh := uint32(0), frames
+	for fl < fh {
+		m := fl + (fh-fl)/2
+		r, e := s.frameRecord(row, m)
+		if e != nil {
+			return e
+		}
+		if le.Uint64(r[8:])+uint64(le.Uint32(r[16:])) <= stop {
+			fl = m + 1
+		} else {
+			fh = m
+		}
+	}
+	begin := uint32(0)
+	if fl > 0 {
+		r, e := s.frameRecord(row, fl-1)
+		if e != nil {
+			return e
+		}
+		if le.Uint32(r[20:])&2 == 0 && fl > 1 {
+			fl--
+			r, e = s.frameRecord(row, fl-1)
+			if e != nil {
+				return e
+			}
+		}
+		if le.Uint32(r[20:])&2 != 0 {
+			_, body, e := s.readFrame(r)
+			if e != nil {
+				return e
+			}
+			copy(out, body[len(body)-LeafSize+int(offset):len(body)-LeafSize+int(offset)+len(out)])
+			begin = fl
+		}
+	}
+	for i := begin; i < frames; i++ {
+		r, e := s.frameRecord(row, i)
+		if e != nil {
+			return e
+		}
+		if le.Uint64(r[8:]) >= stop {
+			break
+		}
+		h, body, e := s.readFrame(r)
+		if e != nil {
+			return e
+		}
+		if e = applyXORRecords(body, le.Uint32(h[12:]), threshold, offset, out); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+func (db *DB) sealedLeaf(leaf, v uint64, out []byte) error { return db.sealedRange(leaf, v, 0, out) }
+
+// sealedRange starts at the latest sealed boundary, then follows previous-change
+// epoch pointers backwards. Dense index searches avoid unrelated byte ranges.
+func (db *DB) sealedRange(leaf, v, offset uint64, out []byte) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if offset+uint64(len(out)) > LeafSize {
+		return fmt.Errorf("pagerdb: sealed range outside leaf")
+	}
+	if len(db.sealed) == 0 || v >= db.sealed[len(db.sealed)-1].end {
+		db.readWindowRange(v, leaf, offset, out)
+		return nil
+	}
+	if v < db.sealed[0].start {
+		return ErrVersion
+	}
+	latest := db.sealed[len(db.sealed)-1]
+	db.readWindowRange(latest.end, leaf, offset, out)
+	row, ok, err := latest.lookup(leaf)
+	if err != nil || !ok {
+		return err
+	}
+	epoch := le.Uint64(row[16:])
+	for epoch != 0 {
+		i := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].epoch >= epoch })
+		if i == len(db.sealed) || db.sealed[i].epoch != epoch {
+			if epoch < db.sealed[0].epoch {
+				return nil
+			}
+			return fmt.Errorf("pagerdb: missing previous XOR epoch %d", epoch)
+		}
+		s := db.sealed[i]
+		if s.end <= v {
+			return nil
+		}
+		row, ok, err = s.lookup(leaf)
+		if err != nil {
+			return err
+		}
+		if !ok || le.Uint32(row[4:]) == 0 || le.Uint64(row[16:]) != epoch {
+			return fmt.Errorf("pagerdb: missing XOR leaf in previous epoch")
+		}
+		if err = s.undoLeaf(row, v, offset, out); err != nil {
+			return err
+		}
+		if s.start <= v {
+			return nil
+		}
+		epoch = le.Uint64(row[24:])
 	}
 	return nil
 }
@@ -748,75 +1097,6 @@ func (s *sealedEpoch) findRoot(root [32]byte) (uint64, bool, error) {
 		return 0, false, err
 	}
 	return le.Uint64(rec[32:]), [32]byte(rec[:32]) == root, nil
-}
-
-// Reconstructed leaves are immutable. Pointer identity separates rewound histories.
-var epochLeafCache struct {
-	sync.Mutex
-	slots [64]struct {
-		owner         *sealedEpoch
-		leaf, version uint64
-		bytes         [LeafSize]byte
-	}
-}
-
-// sealedLeaf binary-searches the cumulative indexes for the next epoch that
-// changed the leaf. Its frame base reconstructs the requested version.
-func (db *DB) sealedLeaf(leaf, v uint64, out []byte) (retErr error) {
-	db.mu.Lock()
-	defer db.mu.Unlock()
-	if len(db.sealed) > 0 {
-		owner := db.sealed[len(db.sealed)-1]
-		slot := &epochLeafCache.slots[(leaf*31+v*17)%uint64(len(epochLeafCache.slots))]
-		epochLeafCache.Lock()
-		if slot.owner == owner && slot.leaf == leaf && slot.version == v {
-			copy(out, slot.bytes[:])
-			epochLeafCache.Unlock()
-			return nil
-		}
-		epochLeafCache.Unlock()
-		defer func() {
-			if retErr == nil {
-				epochLeafCache.Lock()
-				slot.owner = owner
-				slot.leaf = leaf
-				slot.version = v
-				copy(slot.bytes[:], out)
-				epochLeafCache.Unlock()
-			}
-		}()
-	}
-	target := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].end >= v })
-	if target == len(db.sealed) {
-		db.readWindow(v, leaf*LeafSize, out)
-		return nil
-	}
-	threshold := db.sealed[target].epoch
-	lo, hi := target, len(db.sealed)
-	for lo < hi {
-		m := lo + (hi-lo)/2
-		r, ok, err := db.sealed[m].lookup(leaf)
-		if err != nil {
-			return err
-		}
-		if ok && le.Uint64(r[16:]) >= threshold {
-			hi = m
-		} else {
-			lo = m + 1
-		}
-	}
-	if lo < len(db.sealed) {
-		ok, err := db.sealed[lo].leaf(leaf, v, out)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("pagerdb: inconsistent cumulative epoch index")
-		}
-		return nil
-	}
-	db.readWindow(db.sealed[len(db.sealed)-1].end, leaf*LeafSize, out)
-	return nil
 }
 
 // Delete removes an epoch and makes the directory change durable.

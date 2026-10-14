@@ -2,11 +2,12 @@ package pagerdb
 
 import (
 	"bytes"
-	"encoding/binary"
+	"fmt"
 	"github.com/klauspost/compress/zstd"
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,72 +41,6 @@ func TestDiskSort(t *testing.T) {
 		}
 		previous = rec
 	}
-}
-
-func TestEpochFrameValidation(t *testing.T) {
-	enc, _ := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
-	defer enc.Close()
-	payload := make([]byte, LeafSize)
-	payload = append(payload, 0, 0, 0, 1, 0, 42)
-	for _, compressed := range []bool{false, true} {
-		body := payload
-		var h [frameHdr]byte
-		if compressed {
-			body = enc.EncodeAll(payload, nil)
-			h[0] = 1
-		}
-		le.PutUint32(h[4:], uint32(len(body)))
-		le.PutUint64(h[8:], 5)
-		var out [LeafSize]byte
-		if e := decodeFrame(h[:], body, 5, out[:]); e != nil {
-			t.Fatal(e)
-		}
-		if out[0] != 42 {
-			t.Fatal(out[0])
-		}
-		h[0] = 2
-		if decodeFrame(h[:], body, 5, out[:]) == nil {
-			t.Fatal("bad flag accepted")
-		}
-	}
-	for _, suffix := range [][]byte{{0x80}, {0, 255, 255, 1, 0, 1}, {0, 0, 0, 255, 255}, {0, 0, 0, 0, 0}} {
-		b := append(make([]byte, LeafSize), suffix...)
-		var h [frameHdr]byte
-		le.PutUint32(h[4:], uint32(len(b)))
-		if decodeFrame(h[:], b, 0, make([]byte, LeafSize)) == nil {
-			t.Fatal("malformed entry accepted")
-		}
-	}
-}
-
-func FuzzEpochFrame(f *testing.F) {
-	h := make([]byte, frameHdr)
-	le.PutUint32(h[4:], LeafSize)
-	f.Add(append(h, make([]byte, LeafSize)...))
-	f.Add([]byte("bad frame"))
-	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) < frameHdr {
-			return
-		}
-		decodeFrame(b[:frameHdr], b[frameHdr:], 100, make([]byte, LeafSize))
-	})
-}
-func FuzzEpochIndex(f *testing.F) {
-	h := make([]byte, epochHdr)
-	copy(h, epochMagic)
-	le.PutUint64(h[8:], 1)
-	le.PutUint64(h[40:], epochHdr)
-	le.PutUint64(h[56:], epochHdr)
-	le.PutUint64(h[48:], 1)
-	h = append(h, make([]byte, rootRec)...)
-	f.Add(h)
-	f.Add([]byte("bad index"))
-	f.Fuzz(func(t *testing.T, b []byte) {
-		s, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1)
-		if e == nil {
-			s.lookup(0)
-		}
-	})
 }
 
 func TestEpochCumulativeLookup(t *testing.T) {
@@ -148,56 +83,6 @@ func TestEpochCumulativeLookup(t *testing.T) {
 			t.Fatalf("version %d got %d", i, b[0])
 		}
 		v.Close()
-	}
-}
-
-func BenchmarkEpochCompression(b *testing.B) {
-	for _, random := range []bool{false, true} {
-		name := "EVM"
-		if random {
-			name = "Random"
-		}
-		b.Run(name, func(b *testing.B) {
-			payload := make([]byte, LeafSize)
-			var x uint64 = 1234567
-			for i := 0; i < 1000; i++ {
-				var tmp [14]byte
-				n := binary.PutUvarint(tmp[:], 1)
-				le.PutUint16(tmp[n:], uint16((i%16)*64))
-				le.PutUint16(tmp[n+2:], 64)
-				payload = append(payload, tmp[:n+4]...)
-				for j := 0; j < 64; j++ {
-					x ^= x << 13
-					x ^= x >> 7
-					x ^= x << 17
-					v := byte(0)
-					if random || j%32 >= 24 {
-						v = byte(x)
-					}
-					payload = append(payload, v)
-				}
-			}
-			enc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
-			defer enc.Close()
-			compressed := enc.EncodeAll(payload, nil)
-			body := payload
-			var h [frameHdr]byte
-			if len(compressed)*10 <= len(payload)*9 {
-				body = compressed
-				h[0] = 1
-			}
-			le.PutUint32(h[4:], uint32(len(body)))
-			out := make([]byte, LeafSize)
-
-			b.SetBytes(int64(len(payload)))
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				if e := decodeFrame(h[:], body, 1000, out); e != nil {
-					b.Fatal(e)
-				}
-			}
-			b.ReportMetric(float64(len(body))/float64(len(payload)), "ratio")
-		})
 	}
 }
 
@@ -270,26 +155,6 @@ func TestSealMemoryMeasure(t *testing.T) {
 	}
 }
 
-func TestEpochIndexValidation(t *testing.T) {
-	image := make([]byte, epochHdr+idxRec+rootRec)
-	copy(image, epochMagic)
-	for i, v := range []uint64{2, 0, 0, 1, epochHdr, 1, epochHdr + idxRec} {
-		le.PutUint64(image[8+i*8:], v)
-	}
-	// A cumulative row inherited from epoch one has no local frames.
-	le.PutUint64(image[epochHdr+16:], 1)
-	if _, e := parseEpoch(bytes.NewReader(image), int64(len(image)), 2); e != nil {
-		t.Fatal(e)
-	}
-	for _, at := range []int{epochHdr + 4, epochHdr + 8, epochHdr + 16, 48} {
-		bad := append([]byte(nil), image...)
-		bad[at] = 255
-		if _, e := parseEpoch(bytes.NewReader(bad), int64(len(bad)), 2); e == nil {
-			t.Fatalf("accepted mutation at %d", at)
-		}
-	}
-}
-
 func TestSealedRootReturnsNewest(t *testing.T) {
 	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, RetainVersions: 1})
 	if e != nil {
@@ -326,154 +191,419 @@ func TestSealedRootReturnsNewest(t *testing.T) {
 	}
 }
 
-func TestEpochIndexPageBoundary(t *testing.T) {
-	const count = 400
-	image := make([]byte, epochHdr+count*idxRec+rootRec)
-	copy(image, epochMagic)
-	for i, v := range []uint64{2, 0, 0, count, epochHdr, 1, epochHdr + count*idxRec} {
-		le.PutUint64(image[8+i*8:], v)
+func xorFrameSeed() []byte {
+	h := make([]byte, frameHdr)
+	for _, at := range []int{4, 8} {
+		le.PutUint32(h[at:], 9)
 	}
-	for i := 0; i < count; i++ {
-		at := epochHdr + i*idxRec
-		le.PutUint32(image[at:], uint32(i*2))
-		le.PutUint64(image[at+16:], 1)
-	}
-	s, e := parseEpoch(bytes.NewReader(image), int64(len(image)), 2)
-	if e != nil {
-		t.Fatal(e)
-	}
-	for i := 0; i < count; i++ {
-		r, ok, e := s.lookup(uint64(i * 2))
-		if e != nil || !ok || le.Uint32(r[:]) != uint32(i*2) {
-			t.Fatalf("row %d: %v %t", i, e, ok)
+	le.PutUint32(h[12:], 1)
+	le.PutUint32(h[24:], 1)
+	le.PutUint32(h[28:], 1)
+	return append(h, 1, 0, 0, 0, 0, 0, 1, 0, 3)
+}
+func TestXORFrameValidation(t *testing.T) {
+	seed := xorFrameSeed()
+	raw := seed[frameHdr:]
+	enc, _ := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	defer enc.Close()
+	for _, compress := range []bool{false, true} {
+		h := append([]byte(nil), seed[:frameHdr]...)
+		body := raw
+		if compress {
+			body = enc.EncodeAll(raw, nil)
+			h[0] = 1
+			le.PutUint32(h[4:], uint32(len(body)))
 		}
-		_, ok, e = s.lookup(uint64(i*2 + 1))
-		if e != nil || ok {
-			t.Fatalf("missing row %d", i)
+		decoded, e := decodeXORFrame(h, body)
+		if e != nil {
+			t.Fatal(e)
+		}
+		out := []byte{2}
+		if e = applyXORRecords(decoded, 1, 0, 0, out); e != nil || out[0] != 1 {
+			t.Fatalf("%v %v", out, e)
+		}
+	}
+	for _, mutate := range []func([]byte){func(b []byte) { b[0] = 4 }, func(b []byte) { b[8] = 255 }, func(b []byte) { b[12] = 2 }, func(b []byte) { b[24] = 2 }, func(b []byte) { b[len(b)-1] = 0 }, func(b []byte) { b[0] = 2 }} {
+		b := append([]byte(nil), seed...)
+		mutate(b)
+		if _, e := decodeXORFrame(b[:frameHdr], b[frameHdr:]); e == nil {
+			t.Fatal("bad frame accepted")
 		}
 	}
 }
-
-func TestSealBaseUsesPreviousChangeAndGenesis(t *testing.T) {
-	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 100})
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer db.Close()
-	genesis := append([]byte(nil), db.state[:LeafSize]...)
-	r, e := db.Alloc(4096)
-	if e != nil {
-		t.Fatal(e)
-	}
-	db.Write(r, 0, []byte{17})
-	if _, _, e = db.Commit(); e != nil {
-		t.Fatal(e)
-	}
-	var got [LeafSize]byte
-	if e = db.sealBaseLeaf(0, 0, 0, got[:]); e != nil {
-		t.Fatal(e)
-	}
-	if !bytes.Equal(got[:], genesis) {
-		t.Fatal("genesis header base differs")
-	}
-	if e = db.Seal(); e != nil {
-		t.Fatal(e)
-	}
-	leaf := db.loc(r).off / LeafSize
-	for i := 0; i < 3; i++ {
-		if _, _, e = db.Commit(); e != nil {
-			t.Fatal(e)
-		}
-		if e = db.Seal(); e != nil {
-			t.Fatal(e)
+func xorCopyFrameSeed() []byte {
+	const count = 254
+	payload := make([]byte, 0, count*(denseRec+LeafSize)+LeafSize)
+	for i := 0; i < count; i++ {
+		var r [denseRec]byte
+		le.PutUint32(r[:], 1)
+		le.PutUint16(r[6:], LeafSize)
+		payload = append(payload, r[:]...)
+		for j := 0; j < LeafSize; j++ {
+			payload = append(payload, 1)
 		}
 	}
-	previous := db.sealed[len(db.sealed)-1]
-	row, ok, e := previous.lookup(leaf)
-	if e != nil || !ok {
-		t.Fatalf("previous lookup: %t %v", ok, e)
-	}
-	last := le.Uint64(row[16:])
-	if last != 1 {
-		t.Fatalf("last change epoch %d", last)
-	}
-	// Later head writes must not affect the checkpoint base read from epoch one.
-	db.Write(r, 0, []byte{99})
-	if e = db.sealBaseLeaf(last, leaf, previous.end, got[:]); e != nil {
-		t.Fatal(e)
-	}
-	if got[0] != 17 {
-		t.Fatalf("sealed checkpoint base %d", got[0])
-	}
-	// The second region is first allocated after the previous sealed checkpoint.
-	fresh, e := db.Alloc(4096)
-	if e != nil {
-		t.Fatal(e)
-	}
-	db.Write(fresh, 0, []byte{55})
-	freshLeaf := db.loc(fresh).off / LeafSize
-	_, ok, e = previous.lookup(freshLeaf)
-	if e != nil || ok {
-		t.Fatalf("fresh leaf already indexed: %t %v", ok, e)
-	}
-	if e = db.sealBaseLeaf(0, freshLeaf, previous.end, got[:]); e != nil {
-		t.Fatal(e)
-	}
-	if !bytes.Equal(got[:], make([]byte, LeafSize)) {
-		t.Fatal("first-change base is not zero")
-	}
-	if _, _, e = db.Commit(); e != nil {
-		t.Fatal(e)
-	}
-	if e = db.Seal(); e != nil {
-		t.Fatal(e)
-	}
-	if e = db.sealBaseLeaf(1, freshLeaf, previous.end, got[:]); e == nil {
-		t.Fatal("missing base leaf accepted")
-	}
-	if e = db.sealBaseLeaf(^uint64(0), leaf, previous.end, got[:]); e == nil {
-		t.Fatal("missing base epoch accepted")
-	}
-	if e = db.sealBaseLeaf(1, leaf, 0, got[:]); e == nil {
-		t.Fatal("future base epoch accepted")
-	}
+	payload = append(payload, make([]byte, LeafSize)...)
+	enc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
+	body := enc.EncodeAll(payload, nil)
+	enc.Close()
+	h := make([]byte, frameHdr)
+	h[0] = 3
+	le.PutUint32(h[4:], uint32(len(body)))
+	le.PutUint32(h[8:], uint32(len(payload)))
+	le.PutUint32(h[12:], count)
+	le.PutUint32(h[24:], 1)
+	le.PutUint32(h[28:], 1)
+	return append(h, body...)
 }
 
-func BenchmarkSealBaseBacklog(b *testing.B) {
-	db, e := Open(b.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 1 << 30, EpochBytes: 1 << 40})
-	if e != nil {
-		b.Fatal(e)
-	}
-	defer db.Close()
-	r, e := db.Alloc(4096)
-	if e != nil {
-		b.Fatal(e)
-	}
-	db.Write(r, 0, []byte{17})
-	if _, _, e = db.Commit(); e != nil {
-		b.Fatal(e)
-	}
-	if e = db.Seal(); e != nil {
-		b.Fatal(e)
-	}
-	leaf := db.loc(r).off / LeafSize
-	for i := 0; i < 10000; i++ {
-		db.Write(r, 0, []byte{byte(i)})
-	}
-	b.Run("Window", func(b *testing.B) {
-		var out [LeafSize]byte
-		for i := 0; i < b.N; i++ {
-			db.mu.Lock()
-			db.readWindow(1, leaf*LeafSize, out[:])
-			db.mu.Unlock()
+func FuzzEpochFrame(f *testing.F) {
+	f.Add(xorFrameSeed())
+	f.Add(xorCopyFrameSeed())
+	f.Add([]byte("truncated"))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if len(b) < frameHdr {
+			return
+		}
+		if body, e := decodeXORFrame(b[:frameHdr], b[frameHdr:]); e == nil {
+			applyXORRecords(body, le.Uint32(b[12:]), 0, 0, make([]byte, LeafSize))
 		}
 	})
-	b.Run("Sealed", func(b *testing.B) {
-		var out [LeafSize]byte
-		for i := 0; i < b.N; i++ {
-			if e = db.sealBaseLeaf(1, leaf, 1, out[:]); e != nil {
-				b.Fatal(e)
+}
+func epochIndexSeed() []byte {
+	frame := xorFrameSeed()
+	dirOff := epochHdr + len(frame)
+	denseOff := dirOff + frameDirRec
+	idxOff := denseOff + denseRec
+	rootsOff := idxOff + idxRec
+	image := make([]byte, rootsOff+2*rootRec)
+	copy(image, epochMagic)
+	for i, v := range []uint64{1, 0, 1, 1, uint64(idxOff), 2, uint64(rootsOff)} {
+		le.PutUint64(image[8+i*8:], v)
+	}
+	copy(image[epochHdr:], frame)
+	le.PutUint64(image[dirOff:], epochHdr)
+	le.PutUint32(image[dirOff+16:], 1)
+	copy(image[denseOff:], frame[frameHdr:frameHdr+denseRec])
+	le.PutUint32(image[idxOff:], 7)
+	le.PutUint32(image[idxOff+4:], 1)
+	le.PutUint64(image[idxOff+8:], uint64(dirOff))
+	le.PutUint64(image[idxOff+16:], 1)
+	le.PutUint64(image[idxOff+32:], uint64(denseOff))
+	le.PutUint64(image[idxOff+40:], 1)
+	le.PutUint64(image[rootsOff+rootRec+32:], 1)
+	return image
+}
+func FuzzEpochIndex(f *testing.F) {
+	f.Add(epochIndexSeed())
+	f.Add([]byte("truncated"))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if s, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1); e == nil {
+			row, ok, e := s.lookup(7)
+			if e == nil && ok && le.Uint32(row[4:]) > 0 {
+				s.undoLeaf(row, 0, 0, make([]byte, LeafSize))
 			}
 		}
 	})
+}
+func TestXORDenseIndexValidation(t *testing.T) {
+	valid := epochIndexSeed()
+	if _, e := parseEpoch(bytes.NewReader(valid), int64(len(valid)), 1); e != nil {
+		t.Fatal(e)
+	}
+	idx := int(le.Uint64(valid[40:]))
+	dense := int(le.Uint64(valid[idx+32:]))
+	dir := int(le.Uint64(valid[idx+8:]))
+	for _, at := range []int{dense, dense + 5, dense + 7, dir + 8, dir + 16, dir + 20, idx + 24, idx + 32, idx + 40} {
+		b := append([]byte(nil), valid...)
+		b[at] = 255
+		if _, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1); e == nil {
+			t.Fatalf("invalid index byte %d accepted", at)
+		}
+	}
+}
+
+func TestXORTrimNoopAndSameVersionOrder(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(64)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(r, 0, make([]byte, 64))
+	db.Commit()
+	value := make([]byte, 64)
+	value[63] = 1
+	db.Write(r, 0, value)
+	db.Commit()
+	value[63] = 2
+	db.Write(r, 0, value)
+	value[63] = 3
+	db.Write(r, 0, value)
+	db.Commit()
+	db.Write(r, 0, value)
+	db.Commit()
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	leaf := db.loc(r).off / LeafSize
+	within := db.loc(r).off % LeafSize
+	s := db.sealed[0]
+	row, ok, e := s.lookup(leaf)
+	if e != nil || !ok {
+		t.Fatalf("%t %v", ok, e)
+	}
+	if le.Uint64(row[40:]) != 3 || le.Uint32(row[4:]) != 1 {
+		t.Fatalf("index %v", row)
+	}
+	for i, want := range []uint32{3, 3, 2} {
+		d, e := s.denseRecord(row, uint64(i))
+		if e != nil {
+			t.Fatal(e)
+		}
+		if le.Uint32(d[:]) != want || le.Uint16(d[4:]) != uint16(within+63) || le.Uint16(d[6:]) != 1 {
+			t.Fatalf("dense %v", d)
+		}
+	}
+	dir, e := s.frameRecord(row, 0)
+	if e != nil {
+		t.Fatal(e)
+	}
+	h, body, e := s.readFrame(dir)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if h[0]&2 != 0 || len(body) != 27 {
+		t.Fatalf("rare leaf has copy or excess payload: %d %d", h[0], len(body))
+	}
+	for i, want := range []byte{0, 1, 3, 3} {
+		v, e := db.View(uint64(i + 1))
+		if e != nil {
+			t.Fatal(e)
+		}
+		var got [64]byte
+		if e = v.Read(r, 0, 64, got[:]); e != nil {
+			t.Fatal(e)
+		}
+		v.Close()
+		if got[63] != want {
+			t.Fatalf("version %d got %d want %d", i+1, got[63], want)
+		}
+	}
+	// A disjoint range must succeed without reading frame payloads.
+	old := s.ra
+	s.ra = rejectFrameReader{ReaderAt: old, from: le.Uint64(dir[:]) + frameHdr, to: le.Uint64(dir[:]) + frameHdr + uint64(le.Uint32(h[4:]))}
+	defer func() { s.ra = old }()
+	out := []byte{0}
+	if e = s.undoLeaf(row, 1, within, out); e != nil {
+		t.Fatalf("disjoint dense fastpath: %v", e)
+	}
+}
+
+type rejectFrameReader struct {
+	io.ReaderAt
+	from, to uint64
+}
+
+func (r rejectFrameReader) ReadAt(p []byte, off int64) (int, error) {
+	if uint64(off) < r.to && uint64(off)+uint64(len(p)) > r.from {
+		return 0, fmt.Errorf("unexpected frame payload read")
+	}
+	return r.ReaderAt.ReadAt(p, off)
+}
+
+func TestXORRunCopies(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 1000})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	snapshots := make([][]byte, 600)
+	for i := range snapshots {
+		b := make([]byte, LeafSize)
+		for j := range b {
+			b[j] = byte((i+j)%251 + 1)
+		}
+		snapshots[i] = b
+		db.Write(r, 0, b)
+		if _, _, e = db.Commit(); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	s := db.sealed[0]
+	row, ok, e := s.lookup(db.loc(r).off / LeafSize)
+	if e != nil || !ok {
+		t.Fatal(e)
+	}
+	if le.Uint32(row[4:]) < 3 {
+		t.Fatal("missing run split")
+	}
+	for i := uint32(0); i < le.Uint32(row[4:]); i++ {
+		d, e := s.frameRecord(row, i)
+		if e != nil {
+			t.Fatal(e)
+		}
+		h, body, e := s.readFrame(d)
+		if e != nil {
+			t.Fatal(e)
+		}
+		copyFlag := h[0]&2 != 0
+		if copyFlag != (i+1 < le.Uint32(row[4:])) {
+			t.Fatalf("copy flag on run %d", i)
+		}
+		if copyFlag && len(body) < LeafSize {
+			t.Fatal("missing copy")
+		}
+	}
+	for _, version := range []uint64{1, 100, 250, 254, 255, 300, 500, 599, 600} {
+		v, e := db.View(version)
+		if e != nil {
+			t.Fatal(e)
+		}
+		got := make([]byte, LeafSize)
+		if e = v.Read(r, 0, LeafSize, got); e != nil {
+			t.Fatal(e)
+		}
+		v.Close()
+		if !bytes.Equal(got, snapshots[version-1]) {
+			t.Fatalf("bad run copy at version %d", version)
+		}
+	}
+}
+
+func TestXORSameVersionRunCopies(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	b := make([]byte, LeafSize)
+	for i := 0; i < 600; i++ {
+		for j := range b {
+			b[j] = byte((i+j)%251 + 1)
+		}
+		db.Write(r, 0, b)
+	}
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	v, e := db.View(1)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer v.Close()
+	if e = v.Read(r, 0, LeafSize, b); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Equal(b, make([]byte, LeafSize)) {
+		t.Fatal("same-version run copy exposes intermediate state")
+	}
+}
+func TestXOREpochVersionBounds(t *testing.T) {
+	db := &DB{dir: t.TempDir()}
+	m := make([]byte, cpRec+blockRec)
+	m[0] = 'C'
+	m[cpRec] = 'B'
+	le.PutUint64(m[cpRec+8:], 1<<32)
+	e := db.seal(&chunk{epoch: 1, m: m, tail: int64(len(m))})
+	if e == nil || !strings.Contains(e.Error(), "reduce EpochVersions") {
+		t.Fatalf("invalid span: %v", e)
+	}
+}
+
+func TestXOROverlappingTouchesAndWrites(t *testing.T) {
+	dir := t.TempDir()
+	options := Options{MaxLeaves: 1 << 16, RetainVersions: 1}
+	db, e := Open(dir, options)
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, e := db.Alloc(2048)
+	if e != nil {
+		t.Fatal(e)
+	}
+	mapped, e := db.Map(r)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(r, 0, bytes.Repeat([]byte{16}, 2048))
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	snapshots := [][]byte{append([]byte(nil), mapped...)}
+	db.Touch(r, 0, 1024)
+	mapped[0] = 1
+	db.Write(r, 0, []byte{2, 3})
+	mapped[0] = 9
+	db.Touch(r, 0, 1024)
+	mapped[1] = 7
+	db.Write(r, 1, []byte{8})
+	mapped[2] = 4
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	snapshots = append(snapshots, append([]byte(nil), mapped...))
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	db.Touch(r, 0, 2048)
+	mapped[0] = 42
+	mapped[1024] = 23
+	db.Touch(r, 1024, 512)
+	db.Write(r, 1024, []byte{24})
+	mapped[1025] = 99
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	snapshots = append(snapshots, append([]byte(nil), mapped...))
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	check := func() {
+		for i, want := range snapshots {
+			v, e := db.View(uint64(i + 1))
+			if e != nil {
+				t.Fatal(e)
+			}
+			got := make([]byte, len(want))
+			e = v.Read(r, 0, len(got), got)
+			v.Close()
+			if e != nil {
+				t.Fatal(e)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("Touch/Write history differs at version %d", i+1)
+			}
+		}
+	}
+	check()
+	if e = db.Close(); e != nil {
+		t.Fatal(e)
+	}
+	db, e = Open(dir, options)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	check()
 }

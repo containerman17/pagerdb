@@ -33,7 +33,7 @@ func (db *DB) view(v uint64) (*View, error) {
 	if v < db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v > db.sealed[len(db.sealed)-1].end) {
 		return nil, ErrVersion
 	}
-	if v >= db.chunks[0].start && (len(db.sealed) == 0 || v >= db.sealed[len(db.sealed)-1].end) {
+	if v >= db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v >= db.sealed[len(db.sealed)-1].end) {
 		db.pins[v]++
 		return &View{db: db, v: v, window: true}, nil
 	}
@@ -139,14 +139,13 @@ func (vw *View) readFile(fo uint64, b []byte) error {
 		return nil
 	}
 	vw.db.mu.Unlock()
-	var lb [LeafSize]byte
 	for pos := uint64(0); pos < uint64(len(b)); {
 		o := fo + pos
-		leaf := o / LeafSize
-		if err := vw.db.sealedLeaf(leaf, vw.v, lb[:]); err != nil {
+		n := min(uint64(len(b))-pos, LeafSize-o%LeafSize)
+		if err := vw.db.sealedRange(o/LeafSize, vw.v, o%LeafSize, b[pos:pos+n]); err != nil {
 			return err
 		}
-		pos += uint64(copy(b[pos:], lb[o%LeafSize:]))
+		pos += n
 	}
 	return nil
 }
