@@ -216,6 +216,8 @@ func (db *DB) stopSealer() {
 }
 
 func (db *DB) closeSealed() {
+	db.sealMu.Lock()
+	defer db.sealMu.Unlock()
 	for _, s := range db.sealed {
 		s.close()
 	}
@@ -846,25 +848,30 @@ func (s *sealedEpoch) undoLeaf(row [idxRec]byte, v, offset uint64, out []byte) e
 	return nil
 }
 
-func (db *DB) sealedLeaf(leaf, v uint64, out []byte) error { return db.sealedRange(leaf, v, 0, out) }
-
 // sealedRange starts at the latest sealed boundary, then follows previous-change
 // epoch pointers backwards. Dense index searches avoid unrelated byte ranges.
+// The epoch walk runs under sealMu only, so deep reads do not block writers.
 func (db *DB) sealedRange(leaf, v, offset uint64, out []byte) error {
-	db.mu.Lock()
-	defer db.mu.Unlock()
 	if offset+uint64(len(out)) > LeafSize {
 		return fmt.Errorf("pagerdb: sealed range outside leaf")
 	}
-	if len(db.sealed) == 0 || v >= db.sealed[len(db.sealed)-1].end {
+	db.mu.Lock()
+	sealed := db.sealed
+	if len(sealed) == 0 || v >= sealed[len(sealed)-1].end {
 		db.readWindowRange(v, leaf, offset, out)
+		db.mu.Unlock()
 		return nil
 	}
-	if v < db.sealed[0].start {
+	if v < sealed[0].start {
+		db.mu.Unlock()
 		return ErrVersion
 	}
-	latest := db.sealed[len(db.sealed)-1]
+	latest := sealed[len(sealed)-1]
 	db.readWindowRange(latest.end, leaf, offset, out)
+	// Lock order is db.mu then sealMu; writers of sealMu hold db.mu first.
+	db.sealMu.RLock()
+	db.mu.Unlock()
+	defer db.sealMu.RUnlock()
 	row, ok, err := latest.lookup(leaf)
 	if err != nil || !ok {
 		return err
@@ -872,14 +879,14 @@ func (db *DB) sealedRange(leaf, v, offset uint64, out []byte) error {
 	// find returns nil for an epoch older than the retained history.
 	find := func(epoch uint64) (*sealedEpoch, [idxRec]byte, error) {
 		var row [idxRec]byte
-		i := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].epoch >= epoch })
-		if i == len(db.sealed) || db.sealed[i].epoch != epoch {
-			if epoch < db.sealed[0].epoch {
+		i := sort.Search(len(sealed), func(i int) bool { return sealed[i].epoch >= epoch })
+		if i == len(sealed) || sealed[i].epoch != epoch {
+			if epoch < sealed[0].epoch {
 				return nil, row, nil
 			}
 			return nil, row, fmt.Errorf("pagerdb: missing previous XOR epoch %d", epoch)
 		}
-		return db.sealed[i], row, nil
+		return sealed[i], row, nil
 	}
 	// changed loads the row of a recorded change of leaf in s.
 	changed := func(s *sealedEpoch) ([idxRec]byte, error) {

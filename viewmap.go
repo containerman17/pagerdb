@@ -118,15 +118,18 @@ func (vw *View) snapshotView(l loc) (*os.File, error) {
 			}
 		}
 	}
-	sealed := append([]*sealedEpoch(nil), db.sealed...)
+	sealed := db.sealed
+	db.sealMu.RLock()
 	db.mu.Unlock()
 	for _, s := range sealed {
 		if s.end > vw.v {
 			if err := s.eachChangedLeaf(func(leaf uint64) error { addChanged(leaf); return nil }); err != nil {
+				db.sealMu.RUnlock()
 				return nil, err
 			}
 		}
 	}
+	db.sealMu.RUnlock()
 	var leaf [LeafSize]byte
 	for index := range changed {
 		off := index * LeafSize

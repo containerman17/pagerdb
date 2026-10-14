@@ -434,7 +434,9 @@ func (db *DB) Rewind(v uint64) error {
 		if err := db.o.Store.Delete(s.epoch); err != nil {
 			return err
 		}
+		db.sealMu.Lock()
 		s.close()
+		db.sealMu.Unlock()
 		db.sealed = db.sealed[:len(db.sealed)-1]
 	}
 	if err := db.cur.f.Truncate(int64(len(db.cur.m))); err != nil {

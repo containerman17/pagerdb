@@ -771,3 +771,81 @@ func TestXORBaseCopies(t *testing.T) {
 		}
 	}
 }
+
+// TestSealedReadsDuringRewind reads sealed history without db.mu while Rewind
+// deletes and unmaps newer epochs.
+func TestSealedReadsDuringRewind(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 13, EpochVersions: 10, RetainVersions: 200})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(4 * LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	commit := func(i int) {
+		db.Write(r, (i%4)*LeafSize, []byte{byte(i), byte(i >> 8), 1})
+		if _, _, e := db.Commit(); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for i := 0; i < 300; i++ {
+		commit(i)
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	vw, e := db.View(20)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer vw.Close()
+	want, e := vw.Copy(r)
+	if e != nil {
+		t.Fatal(e)
+	}
+	stop := make(chan struct{})
+	errs := make(chan error, 4)
+	for g := 0; g < 4; g++ {
+		go func() {
+			for {
+				select {
+				case <-stop:
+					errs <- nil
+					return
+				default:
+				}
+				got, e := vw.Copy(r)
+				if e == nil && !bytes.Equal(got, want) {
+					e = fmt.Errorf("sealed read changed")
+				}
+				if e != nil {
+					errs <- e
+					return
+				}
+			}
+		}()
+	}
+	for round := 0; round < 30; round++ {
+		n := len(db.sealed)
+		if e = db.Rewind(db.Version() - 40); e != nil {
+			t.Fatal(e)
+		}
+		if len(db.sealed) >= n {
+			t.Fatal("rewind kept every sealed epoch")
+		}
+		for i := 0; i < 40; i++ {
+			commit(i)
+		}
+		if e = db.Seal(); e != nil {
+			t.Fatal(e)
+		}
+	}
+	close(stop)
+	for g := 0; g < 4; g++ {
+		if e = <-errs; e != nil {
+			t.Fatal(e)
+		}
+	}
+}

@@ -77,6 +77,9 @@ type DB struct {
 	unclean bool
 	o       Options
 	mu      sync.Mutex
+	// sealMu keeps sealed epoch mappings open while readers walk them
+	// without mu. Closing an epoch takes it exclusively, after mu.
+	sealMu sync.RWMutex
 
 	stateF, treeF *os.File
 	state         []byte // whole capacity, MAP_SHARED
