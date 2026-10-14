@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"hash/crc32"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -262,9 +261,7 @@ func (db *DB) open() error {
 			last.close()
 			return err
 		}
-		if c, ok := s.ra.(io.Closer); ok {
-			c.Close()
-		}
+		s.close()
 		db.sealed = db.sealed[:len(db.sealed)-1]
 	}
 	latest := db.o.Store.Latest()
@@ -437,9 +434,7 @@ func (db *DB) Rewind(v uint64) error {
 		if err := db.o.Store.Delete(s.epoch); err != nil {
 			return err
 		}
-		if c, ok := s.ra.(io.Closer); ok {
-			c.Close()
-		}
+		s.close()
 		db.sealed = db.sealed[:len(db.sealed)-1]
 	}
 	if err := db.cur.f.Truncate(int64(len(db.cur.m))); err != nil {

@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 
 	"github.com/klauspost/compress/zstd"
+	"golang.org/x/sys/unix"
 )
 
 // EpochStore holds sealed epoch files. Put and Delete must be durable when
@@ -131,6 +132,7 @@ const (
 type sealedEpoch struct {
 	epoch, start, end uint64
 	ra                io.ReaderAt
+	mem               []byte // read-only mapping when the store returns an *os.File
 	nLeaves, indexOff uint64
 	size              int64
 	nRoots, rootsOff  uint64
@@ -209,9 +211,7 @@ func (db *DB) stopSealer() {
 
 func (db *DB) closeSealed() {
 	for _, s := range db.sealed {
-		if c, ok := s.ra.(io.Closer); ok {
-			c.Close()
-		}
+		s.close()
 	}
 	db.sealed = nil
 }
@@ -378,8 +378,17 @@ func (db *DB) openSealed(epoch uint64) (*sealedEpoch, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, err := parseEpoch(ra, size, epoch)
+	// Local files are mapped: index lookups become memory reads without syscalls,
+	// locks or copies, and the kernel page cache bounds their memory.
+	var mem []byte
+	if f, ok := ra.(*os.File); ok && size >= epochHdr && size <= int64(^uint(0)>>1) {
+		mem, _ = unix.Mmap(int(f.Fd()), 0, int(size), unix.PROT_READ, unix.MAP_SHARED)
+	}
+	s, err := parseEpoch(ra, size, epoch, mem)
 	if err != nil {
+		if mem != nil {
+			unix.Munmap(mem)
+		}
 		if c, ok := ra.(io.Closer); ok {
 			c.Close()
 		}
@@ -387,7 +396,18 @@ func (db *DB) openSealed(epoch uint64) (*sealedEpoch, error) {
 	return s, err
 }
 
-func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) {
+// close releases the epoch's mapping and reader.
+func (s *sealedEpoch) close() {
+	if s.mem != nil {
+		unix.Munmap(s.mem)
+		s.mem = nil
+	}
+	if c, ok := s.ra.(io.Closer); ok {
+		c.Close()
+	}
+}
+
+func parseEpoch(ra io.ReaderAt, size int64, epoch uint64, mem []byte) (*sealedEpoch, error) {
 	var h [epochHdr]byte
 	if _, err := ra.ReadAt(h[:], 0); err != nil {
 		return nil, err
@@ -395,7 +415,7 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 	if string(h[:8]) != epochMagic || le.Uint64(h[8:]) != epoch {
 		return nil, fmt.Errorf("pagerdb: epoch %d: bad header", epoch)
 	}
-	s := &sealedEpoch{epoch: epoch, start: le.Uint64(h[16:]), end: le.Uint64(h[24:]), ra: ra, size: size, nLeaves: le.Uint64(h[32:]), indexOff: le.Uint64(h[40:]), nRoots: le.Uint64(h[48:]), rootsOff: le.Uint64(h[56:])}
+	s := &sealedEpoch{epoch: epoch, start: le.Uint64(h[16:]), end: le.Uint64(h[24:]), ra: ra, mem: mem, size: size, nLeaves: le.Uint64(h[32:]), indexOff: le.Uint64(h[40:]), nRoots: le.Uint64(h[48:]), rootsOff: le.Uint64(h[56:])}
 	if size < epochHdr || s.start > s.end || s.end-s.start > uint64(^uint32(0)) || s.nRoots != s.end-s.start+1 || s.indexOff < epochHdr || s.indexOff > uint64(size) || s.nLeaves > (uint64(size)-s.indexOff)/idxRec || s.rootsOff != s.indexOff+s.nLeaves*idxRec || s.rootsOff > uint64(size) || s.nRoots > (uint64(size)-s.rootsOff)/rootRec || s.rootsOff+s.nRoots*rootRec != uint64(size) {
 		return nil, fmt.Errorf("pagerdb: epoch %d: invalid bounds", epoch)
 	}
@@ -456,10 +476,11 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 	return s, nil
 }
 
-// The process-wide cache retains at most 64 index pages (256 KiB).
+// The process-wide cache for stores that are not local files retains at most
+// 512 index pages (2 MiB).
 var epochIndexCache struct {
 	sync.Mutex
-	slots [64]struct {
+	slots [512]struct {
 		owner *sealedEpoch
 		at    uint64
 		bytes [4096]byte
@@ -470,11 +491,15 @@ func (s *sealedEpoch) readSmall(at uint64, out []byte) error {
 	if at > uint64(s.size) || uint64(len(out)) > uint64(s.size)-at {
 		return io.ErrUnexpectedEOF
 	}
+	if s.mem != nil {
+		copy(out, s.mem[at:])
+		return nil
+	}
 	epochIndexCache.Lock()
 	defer epochIndexCache.Unlock()
 	for len(out) > 0 {
 		page, within := at/4096, at%4096
-		slot := &epochIndexCache.slots[(page+s.epoch*17)%uint64(len(epochIndexCache.slots))]
+		slot := &epochIndexCache.slots[((page+s.epoch<<32)*0x9e3779b97f4a7c15)>>55]
 		if slot.owner != s || slot.at != page {
 			slot.owner = nil
 			n := min(uint64(len(slot.bytes)), uint64(s.size)-page*4096)
@@ -533,9 +558,7 @@ func (db *DB) loadSealed() error {
 			return err
 		}
 		if len(db.sealed) > 0 && db.sealed[len(db.sealed)-1].end != s.start {
-			if c, ok := s.ra.(io.Closer); ok {
-				c.Close()
-			}
+			s.close()
 			return fmt.Errorf("pagerdb: sealed epoch checkpoint gap")
 		}
 		db.sealed = append(db.sealed, s)
@@ -543,8 +566,9 @@ func (db *DB) loadSealed() error {
 	return nil
 }
 
-// decodeXORFrame validates one bounded raw or compressed backward run.
-func decodeXORFrame(h, body []byte) ([]byte, error) {
+// decodeXORFrame validates one bounded raw or compressed backward run. A
+// compressed payload is decoded into dst's storage; a raw one is returned as is.
+func decodeXORFrame(h, body, dst []byte) ([]byte, error) {
 	if len(h) != frameHdr || h[0] > 3 || h[1] != 0 || h[2] != 0 || h[3] != 0 || len(body) != int(le.Uint32(h[4:])) || len(body) > frameCap+LeafSize {
 		return nil, fmt.Errorf("pagerdb: invalid XOR frame header")
 	}
@@ -553,15 +577,11 @@ func decodeXORFrame(h, body []byte) ([]byte, error) {
 		return nil, fmt.Errorf("pagerdb: invalid XOR frame bounds")
 	}
 	if h[0]&1 != 0 {
-		frameDecoder.Lock()
-		var err error
-		if frameDecoder.dec == nil {
-			frameDecoder.dec, err = zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(2<<20), zstd.WithDecoderMaxWindow(1<<20))
-		}
+		dec, err := getFrameDecoder()
 		if err == nil {
-			body, err = frameDecoder.dec.DecodeAll(body, nil)
+			body, err = dec.DecodeAll(body, dst[:0])
+			putFrameDecoder(dec)
 		}
-		frameDecoder.Unlock()
 		if err != nil {
 			return nil, fmt.Errorf("pagerdb: invalid compressed XOR frame: %w", err)
 		}
@@ -601,10 +621,28 @@ func decodeXORFrame(h, body []byte) ([]byte, error) {
 	return body, nil
 }
 
-var frameDecoder struct {
-	sync.Mutex
-	dec *zstd.Decoder
+// frameDecoders keeps idle zstd decoders for concurrent sealed reads.
+var frameDecoders = make(chan *zstd.Decoder, 64)
+
+func getFrameDecoder() (*zstd.Decoder, error) {
+	select {
+	case d := <-frameDecoders:
+		return d, nil
+	default:
+		return zstd.NewReader(nil, zstd.WithDecoderConcurrency(1), zstd.WithDecoderMaxMemory(2<<20), zstd.WithDecoderMaxWindow(1<<20))
+	}
 }
+
+func putFrameDecoder(d *zstd.Decoder) {
+	select {
+	case frameDecoders <- d:
+	default:
+		d.Close()
+	}
+}
+
+// frameBuffers holds decoded-payload buffers so sealed reads do not allocate.
+var frameBuffers = sync.Pool{New: func() any { b := make([]byte, 0, frameCap+LeafSize); return &b }}
 
 func applyXORRecords(body []byte, count uint32, threshold uint32, offset uint64, out []byte) error {
 	p := 0
@@ -644,7 +682,10 @@ func (s *sealedEpoch) frameRecord(row [idxRec]byte, i uint32) ([frameDirRec]byte
 	err := s.readSmall(le.Uint64(row[8:])+uint64(i)*frameDirRec, r[:])
 	return r, err
 }
-func (s *sealedEpoch) readFrame(dir [frameDirRec]byte) ([frameHdr]byte, []byte, error) {
+
+// readFrame returns a frame header and its decoded payload. The payload aliases
+// the epoch mapping or dst's storage; it is valid until dst is reused.
+func (s *sealedEpoch) readFrame(dir [frameDirRec]byte, dst []byte) ([frameHdr]byte, []byte, error) {
 	var h [frameHdr]byte
 	off := le.Uint64(dir[:])
 	if off < epochHdr || off > s.indexOff || s.indexOff-off < frameHdr {
@@ -660,17 +701,28 @@ func (s *sealedEpoch) readFrame(dir [frameDirRec]byte) ([frameHdr]byte, []byte, 
 	if le.Uint64(h[16:]) != le.Uint64(dir[8:]) || le.Uint32(h[12:]) != le.Uint32(dir[16:]) || uint32(h[0]) != le.Uint32(dir[20:]) {
 		return h, nil, fmt.Errorf("pagerdb: frame directory mismatch")
 	}
-	body := make([]byte, n)
-	if _, err := s.ra.ReadAt(body, int64(off)+frameHdr); err != nil {
-		return h, nil, err
+	var body []byte
+	if s.mem != nil {
+		body = s.mem[off+frameHdr : off+frameHdr+n]
+	} else {
+		if h[0]&1 != 0 {
+			body = make([]byte, n) // compressed input; dst receives the output
+		} else {
+			body = dst[:n]
+		}
+		if _, err := s.ra.ReadAt(body, int64(off)+frameHdr); err != nil {
+			return h, nil, err
+		}
 	}
-	body, err := decodeXORFrame(h[:], body)
+	body, err := decodeXORFrame(h[:], body, dst)
 	return h, body, err
 }
 
 // undoLeaf checks dense range metadata before loading any XOR payload. A complete
 // run copy newer than the target replaces all earlier runs in this epoch.
 func (s *sealedEpoch) undoLeaf(row [idxRec]byte, v, offset uint64, out []byte) error {
+	buf := frameBuffers.Get().(*[]byte)
+	defer frameBuffers.Put(buf)
 	threshold := uint32(0)
 	if v >= s.end {
 		return nil
@@ -741,7 +793,7 @@ func (s *sealedEpoch) undoLeaf(row [idxRec]byte, v, offset uint64, out []byte) e
 			}
 		}
 		if le.Uint32(r[20:])&2 != 0 {
-			_, body, e := s.readFrame(r)
+			_, body, e := s.readFrame(r, *buf)
 			if e != nil {
 				return e
 			}
@@ -757,7 +809,7 @@ func (s *sealedEpoch) undoLeaf(row [idxRec]byte, v, offset uint64, out []byte) e
 		if le.Uint64(r[8:]) >= stop {
 			break
 		}
-		h, body, e := s.readFrame(r)
+		h, body, e := s.readFrame(r, *buf)
 		if e != nil {
 			return e
 		}

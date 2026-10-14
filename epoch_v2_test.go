@@ -216,7 +216,7 @@ func TestXORFrameValidation(t *testing.T) {
 			h[0] = 1
 			le.PutUint32(h[4:], uint32(len(body)))
 		}
-		decoded, e := decodeXORFrame(h, body)
+		decoded, e := decodeXORFrame(h, body, nil)
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -228,7 +228,7 @@ func TestXORFrameValidation(t *testing.T) {
 	for _, mutate := range []func([]byte){func(b []byte) { b[0] = 4 }, func(b []byte) { b[8] = 255 }, func(b []byte) { b[12] = 2 }, func(b []byte) { b[24] = 2 }, func(b []byte) { b[len(b)-1] = 0 }, func(b []byte) { b[0] = 2 }} {
 		b := append([]byte(nil), seed...)
 		mutate(b)
-		if _, e := decodeXORFrame(b[:frameHdr], b[frameHdr:]); e == nil {
+		if _, e := decodeXORFrame(b[:frameHdr], b[frameHdr:], nil); e == nil {
 			t.Fatal("bad frame accepted")
 		}
 	}
@@ -267,7 +267,7 @@ func FuzzEpochFrame(f *testing.F) {
 		if len(b) < frameHdr {
 			return
 		}
-		if body, e := decodeXORFrame(b[:frameHdr], b[frameHdr:]); e == nil {
+		if body, e := decodeXORFrame(b[:frameHdr], b[frameHdr:], nil); e == nil {
 			applyXORRecords(body, le.Uint32(b[12:]), 0, 0, make([]byte, LeafSize))
 		}
 	})
@@ -300,17 +300,20 @@ func FuzzEpochIndex(f *testing.F) {
 	f.Add(epochIndexSeed())
 	f.Add([]byte("truncated"))
 	f.Fuzz(func(t *testing.T, b []byte) {
-		if s, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1); e == nil {
-			row, ok, e := s.lookup(7)
-			if e == nil && ok && le.Uint32(row[4:]) > 0 {
-				s.undoLeaf(row, 0, 0, make([]byte, LeafSize))
+		// Exercise both the mapped-file path and the cached ReaderAt path.
+		for _, mem := range [][]byte{b, nil} {
+			if s, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1, mem); e == nil {
+				row, ok, e := s.lookup(7)
+				if e == nil && ok && le.Uint32(row[4:]) > 0 {
+					s.undoLeaf(row, 0, 0, make([]byte, LeafSize))
+				}
 			}
 		}
 	})
 }
 func TestXORDenseIndexValidation(t *testing.T) {
 	valid := epochIndexSeed()
-	if _, e := parseEpoch(bytes.NewReader(valid), int64(len(valid)), 1); e != nil {
+	if _, e := parseEpoch(bytes.NewReader(valid), int64(len(valid)), 1, nil); e != nil {
 		t.Fatal(e)
 	}
 	idx := int(le.Uint64(valid[40:]))
@@ -319,7 +322,7 @@ func TestXORDenseIndexValidation(t *testing.T) {
 	for _, at := range []int{dense, dense + 5, dense + 7, dir + 8, dir + 16, dir + 20, idx + 24, idx + 32, idx + 40} {
 		b := append([]byte(nil), valid...)
 		b[at] = 255
-		if _, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1); e == nil {
+		if _, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1, b); e == nil {
 			t.Fatalf("invalid index byte %d accepted", at)
 		}
 	}
@@ -374,7 +377,7 @@ func TestXORTrimNoopAndSameVersionOrder(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	h, body, e := s.readFrame(dir)
+	h, body, e := s.readFrame(dir, make([]byte, frameCap+LeafSize))
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -396,7 +399,13 @@ func TestXORTrimNoopAndSameVersionOrder(t *testing.T) {
 		}
 	}
 	// A disjoint range must succeed without reading frame payloads.
-	old := s.ra
+	// Use the cached ReaderAt path; a first pass caches the index pages.
+	old, mem := s.ra, s.mem
+	s.mem = nil
+	defer func() { s.mem = mem }()
+	if e = s.undoLeaf(row, 1, within, []byte{0}); e != nil {
+		t.Fatal(e)
+	}
 	s.ra = rejectFrameReader{ReaderAt: old, from: le.Uint64(dir[:]) + frameHdr, to: le.Uint64(dir[:]) + frameHdr + uint64(le.Uint32(h[4:]))}
 	defer func() { s.ra = old }()
 	out := []byte{0}
@@ -455,7 +464,7 @@ func TestXORRunCopies(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		h, body, e := s.readFrame(d)
+		h, body, e := s.readFrame(d, make([]byte, frameCap+LeafSize))
 		if e != nil {
 			t.Fatal(e)
 		}
