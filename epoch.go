@@ -352,10 +352,16 @@ func (db *DB) seal(c *chunk) error {
 	if err != nil {
 		return err
 	}
-	// The log is trimmed only after the state it would recover is durable.
-	if err = db.syncDurable(); err != nil {
-		sealed.close()
-		return err
+	// The log is trimmed only after the state it would recover is durable. One
+	// sync covers every kept chunk up to the current one, so later trims skip it.
+	db.mu.Lock()
+	needSync := len(db.chunks) > 1 && db.chunks[1].epoch > db.durableEpoch
+	db.mu.Unlock()
+	if needSync {
+		if err = db.syncDurable(); err != nil {
+			sealed.close()
+			return err
+		}
 	}
 	if err = c.f.Truncate(c.tail); err != nil {
 		sealed.close()

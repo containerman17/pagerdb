@@ -656,3 +656,43 @@ func TestRecoveryRedoesKeptChunks(t *testing.T) {
 		t.Fatal("recovered bytes differ")
 	}
 }
+
+// TestLogTrimWaitsForDurableState checks that the oldest kept chunk always
+// starts at a checkpoint the synced state file covers. A view pins old chunks
+// while sealing runs, so its Close trims many chunks without a new sync.
+func TestLogTrimWaitsForDurableState(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14, EpochVersions: 2, RetainVersions: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vw, err := db.View(db.Version())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 40 {
+		db.Write(r, 0, []byte{byte(i)})
+		if _, _, err = db.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		if err = db.Seal(); err != nil {
+			t.Fatal(err)
+		}
+		if i == 20 {
+			vw.Close()
+		}
+		db.mu.Lock()
+		first, durable, n := db.chunks[0].epoch, db.durableEpoch, len(db.chunks)
+		db.mu.Unlock()
+		if first > durable {
+			t.Fatalf("block %d: oldest kept chunk %d is newer than durable chunk %d", i, first, durable)
+		}
+		if i > 21 && n > 3 {
+			t.Fatalf("block %d: %d chunks kept", i, n)
+		}
+	}
+}
