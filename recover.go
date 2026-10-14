@@ -26,7 +26,10 @@ func (db *DB) Mark() Mark {
 	return db.mark()
 }
 
-func (db *DB) mark() Mark { return Mark{db.version, db.seq(), db.cur.tail, len(db.touches)} }
+func (db *DB) mark() Mark {
+	db.resetUndoKeys()
+	return Mark{db.version, db.seq(), db.cur.tail, len(db.touches)}
+}
 
 // Undo reverts every write, Touch and allocation logged since m. m must be from the pending block.
 func (db *DB) Undo(m Mark) {
@@ -48,6 +51,7 @@ func (db *DB) undo(m Mark) {
 func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
 
 func (db *DB) undoEntries(pos, seq int64, cut bool) {
+	db.resetUndoKeys()
 	for i := db.seq() - 1; i >= seq; i-- {
 		m, off, n := db.rec(db.entries.at(i))
 		copy(db.state[off:off+n], m[entryHdr:entryHdr+n])

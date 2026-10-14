@@ -350,6 +350,8 @@ func TestXORTrimNoopAndSameVersionOrder(t *testing.T) {
 	db.Commit()
 	value[63] = 2
 	db.Write(r, 0, value)
+	// Preserve both same-version records to exercise their sealed ordering.
+	db.Mark()
 	value[63] = 3
 	db.Write(r, 0, value)
 	db.Commit()

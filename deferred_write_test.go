@@ -93,3 +93,39 @@ func TestDeferredWriteRewindEarlierChunk(t *testing.T) {
 		t.Fatalf("rewind got %d, want 1", got[0])
 	}
 }
+
+func TestRepeatedWriteUndoMarks(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	db.Write(r, 0, []byte{1})
+	tail := db.cur.tail
+	db.Write(r, 0, []byte{2})
+	if db.cur.tail != tail {
+		t.Fatal("repeated range logged twice")
+	}
+	m := db.Mark()
+	db.Write(r, 0, []byte{3})
+	db.Write(r, 0, []byte{4})
+	db.Undo(m)
+	var got [1]byte
+	db.Read(r, 0, 1, got[:])
+	if got[0] != 2 {
+		t.Fatalf("Undo got %d, want 2", got[0])
+	}
+	db.Write(r, 0, []byte{5})
+	db.Undo(m)
+	db.Read(r, 0, 1, got[:])
+	if got[0] != 2 {
+		t.Fatalf("repeated Undo got %d, want 2", got[0])
+	}
+}

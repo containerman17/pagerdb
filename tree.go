@@ -224,6 +224,7 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	copy(r[16:48], root[:])
 	le.PutUint32(r[48:], crc32.Update(crc32.Checksum(c.m[db.blockStart:pos], castagnoli), castagnoli, r[4:48]))
 	r[0] = 'B'
+	db.resetUndoKeys()
 	db.version++
 	db.root = root
 	db.blocks = append(db.blocks, block{ver: db.version, root: root, c: c, end: c.tail})
@@ -238,29 +239,15 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	return root, db.version, nil
 }
 
-// fillNewBytes walks each dirty leaf backwards through this block. A private
-// leaf image supplies each record's new bytes before its undo bytes are applied.
-// Separate leaves write disjoint record ranges, including cross-leaf records.
+// fillNewBytes stores the block's final image for each logged range. Recovery
+// replays complete blocks, so overlapping ranges all carry the same final bytes.
+// Historical reads and sealing use undo images, not intermediate new bytes.
 func (db *DB) fillNewBytes() {
 	db.indexPending()
-	parallel(len(db.dirty), func(lo, hi int) {
-		var buf [LeafSize]byte
-		for _, leaf := range db.dirty[lo:hi] {
-			off := uint64(leaf) * LeafSize
-			copy(buf[:], db.state[off:off+LeafSize])
-			p, ok := db.heads.get(leaf)
-			for ok && p >= db.pieces.base {
-				pc := *db.pieces.at(p)
-				e := db.entries.at(db.pieceEntry(pc))
-				if e.ver <= db.version {
-					break
-				}
-				m, eo, en := db.rec(e)
-				a, z := max(off, eo), min(off+LeafSize, eo+en)
-				copy(m[entryHdr+en+a-eo:entryHdr+en+z-eo], buf[a-off:z-off])
-				copy(buf[a-off:z-off], m[entryHdr+a-eo:entryHdr+z-eo])
-				p, ok = db.prevPiece(p, pc)
-			}
+	parallel(int(db.entries.end-db.blockSeq), func(lo, hi int) {
+		for i := lo; i < hi; i++ {
+			m, off, n := db.rec(db.entries.at(db.blockSeq + int64(i)))
+			copy(m[entryHdr+n:entryHdr+2*n], db.state[off:off+n])
 		}
 	})
 }

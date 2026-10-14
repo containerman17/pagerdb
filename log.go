@@ -175,13 +175,21 @@ type block struct {
 	end  int64 // log position after the record
 }
 
+type undoKey struct {
+	off        uint64
+	n          uint32
+	generation uint32
+}
+
 type logState struct {
-	cur        *chunk
-	chunks     []*chunk // window, oldest first; cur is last
-	blockStart int64    // log position of the pending block's first entry
-	blockSeq   int64    // entry seq of the pending block's first entry
-	touches    []int64  // Touch entries of the pending block, new bytes filled at Commit
-	pending    []int64  // records awaiting the window index
+	undoKeys       []undoKey
+	undoGeneration uint32
+	cur            *chunk
+	chunks         []*chunk // window, oldest first; cur is last
+	blockStart     int64    // log position of the pending block's first entry
+	blockSeq       int64    // entry seq of the pending block's first entry
+	touches        []int64  // Touch entries of the pending block, new bytes filled at Commit
+	pending        []int64  // records awaiting the window index
 
 	entries seqBuf[entry]
 	pieces  seqBuf[piece]
@@ -388,7 +396,25 @@ func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	return pos
 }
 
-func (db *DB) put(r Region, fo uint64, b []byte) { db.logEntry(r, fo, uint64(len(b)), b) }
+// put retains the first undo image of an exact range since the last Mark.
+// Collisions only lose deduplication opportunities. They never skip an undo image.
+func (db *DB) put(r Region, fo uint64, b []byte) {
+	key := &db.undoKeys[((fo>>3)*11400714819323198485)>>48]
+	if key.generation == db.undoGeneration && key.off == fo && uint64(key.n) == uint64(len(b)) {
+		copy(db.state[fo:fo+uint64(len(b))], b)
+		return
+	}
+	db.logEntry(r, fo, uint64(len(b)), b)
+	*key = undoKey{fo, uint32(len(b)), db.undoGeneration}
+}
+
+func (db *DB) resetUndoKeys() {
+	db.undoGeneration++
+	if db.undoGeneration == 0 {
+		clear(db.undoKeys)
+		db.undoGeneration = 1
+	}
+}
 
 func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
 	seq := db.entries.end

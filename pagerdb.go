@@ -146,6 +146,9 @@ func Open(dir string, o Options) (*DB, error) {
 		o.Store = s
 	}
 	db := &DB{dir: dir, o: o, maxLeaves: o.MaxLeaves, segCache: map[Region][]uint64{}, maps: map[Region][]byte{}}
+	db.undoKeys = make([]undoKey, 1<<16)
+	db.undoGeneration = 1
+	db.pending = make([]int64, 0, 1<<16)
 	for l := db.maxLeaves; l > 1; l >>= 1 {
 		db.depth++
 	}

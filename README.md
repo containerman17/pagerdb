@@ -331,9 +331,9 @@ it after the last record. A tag alone is not a durability barrier.
 
 A process crash leaves the shared page cache intact. Recovery undoes raw entries
 after the last complete block, in reverse order. Write publishes each undo entry
-before changing state. Commit reconstructs new bytes per dirty leaf and builds the
-window index. A view or Undo can build that index earlier if needed. Repeated and
-overlapping writes retain their individual undo images so Mark and Undo still work.
+before changing state. Commit copies final new bytes in parallel and builds the window index. A view or Undo can build that index earlier if needed. A fixed-size cache skips repeated exact ranges until Mark, Undo, or Commit.
+Cache collisions only reduce deduplication. Overlapping ranges retain their undo
+images; Mark starts a new cache generation so Undo restores the marked state.
 The new-byte space is reserved during Write but is not copied until Commit.
 
 There is no writeback ordering guarantee across an OS crash or power loss. A block
