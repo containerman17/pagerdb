@@ -277,3 +277,67 @@ func TestEpochIndexValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestSealedRootReturnsNewest(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, RetainVersions: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(4096)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(r, 0, []byte{9})
+	var root [32]byte
+	var version uint64
+	for i := 0; i < 5; i++ {
+		root, version, e = db.Commit()
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	got, ok, e := db.sealed[0].findRoot(root)
+	if e != nil || !ok || got != version {
+		t.Fatalf("got %d %t %v want %d", got, ok, e, version)
+	}
+	v, e := db.ViewRoot(root)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer v.Close()
+	if v.Version() != version {
+		t.Fatalf("got version %d want %d", v.Version(), version)
+	}
+}
+
+func TestEpochIndexPageBoundary(t *testing.T) {
+	const count = 400
+	image := make([]byte, epochHdr+count*idxRec+rootRec)
+	copy(image, epochMagic)
+	for i, v := range []uint64{2, 0, 0, count, epochHdr, 1, epochHdr + count*idxRec} {
+		le.PutUint64(image[8+i*8:], v)
+	}
+	for i := 0; i < count; i++ {
+		at := epochHdr + i*idxRec
+		le.PutUint32(image[at:], uint32(i*2))
+		le.PutUint64(image[at+16:], 1)
+	}
+	s, e := parseEpoch(bytes.NewReader(image), int64(len(image)), 2)
+	if e != nil {
+		t.Fatal(e)
+	}
+	for i := 0; i < count; i++ {
+		r, ok, e := s.lookup(uint64(i * 2))
+		if e != nil || !ok || le.Uint32(r[:]) != uint32(i*2) {
+			t.Fatalf("row %d: %v %t", i, e, ok)
+		}
+		_, ok, e = s.lookup(uint64(i*2 + 1))
+		if e != nil || ok {
+			t.Fatalf("missing row %d", i)
+		}
+	}
+}

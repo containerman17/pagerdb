@@ -501,13 +501,13 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64) (*sealedEpoch, error) 
 	return s, nil
 }
 
-// The process-wide direct-mapped cache retains at most 128 index records.
+// The process-wide cache retains at most 64 index pages (256 KiB).
 var epochIndexCache struct {
 	sync.Mutex
-	slots [128]struct {
+	slots [64]struct {
 		owner *sealedEpoch
 		at    uint64
-		rec   [idxRec]byte
+		bytes [4096]byte
 	}
 }
 
@@ -518,17 +518,26 @@ func (s *sealedEpoch) indexRecord(i uint64) ([idxRec]byte, error) {
 	}
 	epochIndexCache.Lock()
 	defer epochIndexCache.Unlock()
-	slot := &epochIndexCache.slots[(i+s.epoch*17)%uint64(len(epochIndexCache.slots))]
-	if slot.owner == s && slot.at == i {
-		return slot.rec, nil
+	at := i * idxRec
+	for done := 0; done < idxRec; {
+		page := at / 4096
+		within := at % 4096
+		slot := &epochIndexCache.slots[(page+s.epoch*17)%uint64(len(epochIndexCache.slots))]
+		if slot.owner != s || slot.at != page {
+			slot.owner = nil
+			n := min(uint64(len(slot.bytes)), s.nLeaves*idxRec-page*4096)
+			if _, err := s.ra.ReadAt(slot.bytes[:n], int64(s.indexOff+page*4096)); err != nil {
+				return r, err
+			}
+			slot.owner = s
+			slot.at = page
+		}
+		n := min(idxRec-done, 4096-int(within))
+		copy(r[done:done+n], slot.bytes[within:within+uint64(n)])
+		done += n
+		at += uint64(n)
 	}
-	_, err := s.ra.ReadAt(r[:], int64(s.indexOff+i*idxRec))
-	if err == nil {
-		slot.owner = s
-		slot.at = i
-		slot.rec = r
-	}
-	return r, err
+	return r, nil
 }
 func (s *sealedEpoch) lookup(leaf uint64) ([idxRec]byte, bool, error) {
 	lo, hi := uint64(0), s.nLeaves
@@ -654,17 +663,17 @@ func decodeFrame(h, body []byte, v uint64, out []byte) error {
 
 func (s *sealedEpoch) findRoot(root [32]byte) (uint64, bool, error) {
 	var rec [rootRec]byte
-	var err error
+	var readErr error
 	i := sort.Search(int(s.nRoots), func(i int) bool {
 		if _, e := s.ra.ReadAt(rec[:], int64(s.rootsOff)+int64(i)*rootRec); e != nil {
-			err = e
+			readErr = e
 		}
-		return bytes.Compare(rec[:32], root[:]) >= 0
+		return bytes.Compare(rec[:32], root[:]) > 0
 	})
-	if err != nil || i == int(s.nRoots) {
-		return 0, false, err
+	if readErr != nil || i == 0 {
+		return 0, false, readErr
 	}
-	if _, err := s.ra.ReadAt(rec[:], int64(s.rootsOff)+int64(i)*rootRec); err != nil {
+	if _, err := s.ra.ReadAt(rec[:], int64(s.rootsOff)+int64(i-1)*rootRec); err != nil {
 		return 0, false, err
 	}
 	return le.Uint64(rec[32:]), [32]byte(rec[:32]) == root, nil
