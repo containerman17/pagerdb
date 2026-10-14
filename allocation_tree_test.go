@@ -3,6 +3,8 @@ package pagerdb
 import (
 	"crypto/sha256"
 	"golang.org/x/sys/unix"
+	"math/bits"
+	"math/rand/v2"
 	"os"
 	"testing"
 )
@@ -17,6 +19,46 @@ func TestTreeTiles(t *testing.T) {
 				t.Fatalf("depth %d node %d offset %d", depth, i, off)
 			}
 			seen[off] = true
+		}
+	}
+}
+
+// TestTreeTablesMatchFormula checks the precomputed tables and the path
+// iterator against the layout formula documented in the README.
+func TestTreeTablesMatchFormula(t *testing.T) {
+	formula := func(i uint64, depth int) uint64 {
+		d := bits.Len64(i) - 1
+		top := depth%7 + 1
+		if d < top {
+			return (i - 1) * 32
+		}
+		k := (d - top) / 7
+		rootDepth := top + 7*k
+		localDepth := d - rootDepth
+		prefix := i >> localDepth
+		before := uint64(1) + (uint64(1)<<top)*((uint64(1)<<(7*k))-1)/127
+		tile := before + prefix - (uint64(1) << rootDepth)
+		local := (uint64(1) << localDepth) + (i & ((uint64(1) << localDepth) - 1))
+		return tile*4096 + (local-1)*32
+	}
+	rng := rand.New(rand.NewPCG(5, 6))
+	for depth := 1; depth <= 32; depth++ {
+		n := uint64(1) << depth
+		for range 2000 {
+			leaf := n + rng.Uint64N(n)
+			var walk []uint64
+			for i := leaf; i > 0; {
+				local, start := tileStart(i, depth)
+				for ; local > 0; local >>= 1 {
+					walk = append(walk, start+(local-1)*32)
+					i >>= 1
+				}
+			}
+			for i, w := leaf, walk; i > 0; i, w = i>>1, w[1:] {
+				if got, want := treeOffset(i, depth), formula(i, depth); got != want || w[0] != want {
+					t.Fatalf("depth %d node %d: table %d walk %d formula %d", depth, i, got, w[0], want)
+				}
+			}
 		}
 	}
 }
@@ -131,33 +173,45 @@ func TestRegionTableBeyondOldLimit(t *testing.T) {
 	}
 }
 
+// BenchmarkTreePath walks leaf-to-root paths. Random spreads paths over a
+// 2^24-leaf tree (1 GiB of nodes, warm pages); Hot repeats 256 cached paths.
 func BenchmarkTreePath(b *testing.B) {
-	for _, tiled := range []bool{false, true} {
-		name := "Heap"
-		if tiled {
-			name = "Tiles"
+	for _, hot := range []bool{false, true} {
+		for _, tiled := range []bool{false, true} {
+			name := map[bool]string{false: "Random", true: "Hot"}[hot] + map[bool]string{false: "Heap", true: "Tiles"}[tiled]
+			b.Run(name, func(b *testing.B) { benchmarkTreePath(b, tiled, hot) })
 		}
-		b.Run(name, func(b *testing.B) {
-			benchmarkTreePath(b, tiled)
-		})
 	}
 }
 
-func benchmarkTreePath(b *testing.B, tiled bool) {
+func benchmarkTreePath(b *testing.B, tiled, hot bool) {
 	const depth = 24
 	n := uint64(1) << depth
 	tree := make([]byte, max(treeStorageSize(n), 2*n*32))
+	for i := 0; i < len(tree); i += 4096 {
+		tree[i] = 1 // fault every page in before timing
+		tree[i] = 0
+	}
+	mask := n - 1
+	if hot {
+		mask = 255
+	}
 	var sum byte
 	b.ResetTimer()
 	for k := 0; k < b.N; k++ {
-		i := n + (uint64(k) * 11400714819323198485 & (n - 1))
-		for i > 0 {
-			off := i * 32
-			if tiled {
-				off = treeOffset(i, depth)
+		i := n + (uint64(k)&mask*11400714819323198485)&(n-1)
+		if tiled {
+			for i > 0 {
+				local, start := tileStart(i, depth)
+				for ; local > 0; local >>= 1 {
+					sum += tree[start+(local-1)*32]
+					i >>= 1
+				}
 			}
-			sum += tree[off]
-			i >>= 1
+			continue
+		}
+		for ; i > 0; i >>= 1 {
+			sum += tree[i*32]
 		}
 	}
 	b.StopTimer()
