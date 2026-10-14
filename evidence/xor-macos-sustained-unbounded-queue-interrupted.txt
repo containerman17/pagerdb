@@ -1,0 +1,7 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkSustained-8   	signal: terminated
+FAIL	github.com/containerman17/pagerdb	902.485s
+FAIL

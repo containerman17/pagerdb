@@ -1,0 +1,28 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkTreePath/Heap-7       	   17238	      6269 ns/op
+BenchmarkTreePath/Heap-7       	  224766	       519.8 ns/op
+BenchmarkTreePath/Heap-7       	  276835	       637.4 ns/op
+BenchmarkTreePath/Tiles-7      	   97690	      1525 ns/op
+BenchmarkTreePath/Tiles-7      	   86781	      1455 ns/op
+BenchmarkTreePath/Tiles-7      	   73681	      2788 ns/op
+BenchmarkTreeColdPath/Heap-7   	      94	   1155487 ns/op
+BenchmarkTreeColdPath/Heap-7   	     152	    729879 ns/op
+BenchmarkTreeColdPath/Heap-7   	     213	    604529 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     598	    220753 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     399	    271920 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     916	    122944 ns/op
+BenchmarkWrite64-7             	    1233	    251127 ns/op	   0.25 MB/s
+BenchmarkWrite64-7             	     950	    225828 ns/op	   0.28 MB/s
+BenchmarkWrite64-7             	    1207	    185954 ns/op	   0.34 MB/s
+BenchmarkCommit50k-7           	       1	1046617857 ns/op	     47776 leaves/s
+BenchmarkCommit50k-7           	       1	 754479146 ns/op	     66272 leaves/s
+BenchmarkCommit50k-7           	       1	1872839556 ns/op	     26698 leaves/s
+BenchmarkViewReadWindow-7      	   51753	      1949 ns/op	    513326 reads/s
+BenchmarkViewReadWindow-7      	  121125	       921.9 ns/op	   1084731 reads/s
+BenchmarkViewReadWindow-7      	   50077	      3039 ns/op	    329163 reads/s
+signal: terminated
+FAIL	github.com/containerman17/pagerdb	193.171s
+FAIL

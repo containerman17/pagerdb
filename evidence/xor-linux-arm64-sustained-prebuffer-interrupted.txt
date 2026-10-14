@@ -1,0 +1,6 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkSustained-7   	signal: terminated
+FAIL	github.com/containerman17/pagerdb	166.385s
+FAIL

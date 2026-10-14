@@ -1,0 +1,26 @@
+=== RUN   TestXORWorkloadMetrics
+=== RUN   TestXORWorkloadMetrics/EVM
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=41.3567 B/record zstd_before=4.0365 B/record zstd_after=3.9545 B/record kept_zstd=1.0000 all_epoch_bytes=15.3710 B/app-record
+=== RUN   TestXORWorkloadMetrics/Random
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=72.3151 B/record zstd_before=72.3232 B/record zstd_after=72.3151 B/record kept_zstd=0.0000 all_epoch_bytes=83.7315 B/app-record
+--- PASS: TestXORWorkloadMetrics (3.04s)
+    --- PASS: TestXORWorkloadMetrics/EVM (1.16s)
+    --- PASS: TestXORWorkloadMetrics/Random (1.88s)
+=== RUN   TestXORWorkloadMetrics
+=== RUN   TestXORWorkloadMetrics/EVM
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=41.3567 B/record zstd_before=4.0365 B/record zstd_after=3.9545 B/record kept_zstd=1.0000 all_epoch_bytes=15.3710 B/app-record
+=== RUN   TestXORWorkloadMetrics/Random
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=72.3151 B/record zstd_before=72.3232 B/record zstd_after=72.3151 B/record kept_zstd=0.0000 all_epoch_bytes=83.7315 B/app-record
+--- PASS: TestXORWorkloadMetrics (4.61s)
+    --- PASS: TestXORWorkloadMetrics/EVM (2.86s)
+    --- PASS: TestXORWorkloadMetrics/Random (1.75s)
+=== RUN   TestXORWorkloadMetrics
+=== RUN   TestXORWorkloadMetrics/EVM
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=41.3567 B/record zstd_before=4.0365 B/record zstd_after=3.9545 B/record kept_zstd=1.0000 all_epoch_bytes=15.3710 B/app-record
+=== RUN   TestXORWorkloadMetrics/Random
+    xor_bench_test.go:223: records=160016 frames=1616 raw_before=72.3232 B/record raw_after=72.3151 B/record zstd_before=72.3232 B/record zstd_after=72.3151 B/record kept_zstd=0.0000 all_epoch_bytes=83.7315 B/app-record
+--- PASS: TestXORWorkloadMetrics (3.91s)
+    --- PASS: TestXORWorkloadMetrics/EVM (2.35s)
+    --- PASS: TestXORWorkloadMetrics/Random (1.57s)
+PASS
+ok  	github.com/containerman17/pagerdb	11.575s

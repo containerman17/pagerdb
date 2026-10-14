@@ -1,0 +1,14 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkViewMapFirstTouch-7   	      10	     17646 ns/op	     54838 map-ns/op
+BenchmarkViewMapFirstTouch-7   	      10	     41500 ns/op	    132872 map-ns/op
+BenchmarkViewMapFirstTouch-7   	      10	     19788 ns/op	    368036 map-ns/op
+BenchmarkOpenVerified/NoSync-7 	      10	  28849844 ns/op	 290.77 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/NoSync-7 	      10	  29349884 ns/op	 285.81 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/NoSync-7 	      10	  50661260 ns/op	 165.58 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-7   	      10	  91534490 ns/op	  91.64 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-7   	      10	  96811836 ns/op	  86.65 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-7   	      10	 152475721 ns/op	  55.02 MB/s	         4.000 data-MiB	   8388608 state-B
+PASS
+ok  	github.com/containerman17/pagerdb	9.305s

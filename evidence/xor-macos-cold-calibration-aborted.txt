@@ -1,0 +1,13 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreePath/Heap-8    	 9204820	       131.6 ns/op
+BenchmarkTreePath/Heap-8    	12457598	        96.17 ns/op
+BenchmarkTreePath/Heap-8    	13353442	        97.50 ns/op
+BenchmarkTreePath/Tiles-8   	 3359900	       309.2 ns/op
+BenchmarkTreePath/Tiles-8   	 3699914	       347.4 ns/op
+BenchmarkTreePath/Tiles-8   	 3372632	       355.8 ns/op
+BenchmarkTreeColdPath/Heap-8         	signal: terminated
+FAIL	github.com/containerman17/pagerdb	218.047s
+FAIL

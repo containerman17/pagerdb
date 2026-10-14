@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreeColdPath/Heap-8         	     100	     67791 ns/op
+BenchmarkTreeColdPath/Heap-8         	     100	     48874 ns/op
+BenchmarkTreeColdPath/Heap-8         	     100	     61251 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     29081 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     31753 ns/op
+BenchmarkTreeColdPath/Tiles-8        	     100	     25926 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	1.154s

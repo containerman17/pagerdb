@@ -1,0 +1,289 @@
+=== RUN   TestTreeTiles
+--- PASS: TestTreeTiles (0.10s)
+=== RUN   TestTreePathUsesFourTiles
+--- PASS: TestTreePathUsesFourTiles (0.00s)
+=== RUN   TestTreeRootMatchesHeap
+--- PASS: TestTreeRootMatchesHeap (0.05s)
+=== RUN   TestEmptySmallSegmentReturnsToPool
+--- PASS: TestEmptySmallSegmentReturnsToPool (0.03s)
+=== RUN   TestRegionTableBeyondOldLimit
+--- PASS: TestRegionTableBeyondOldLimit (0.02s)
+=== RUN   TestRegionTableAddsSegment
+--- PASS: TestRegionTableAddsSegment (0.24s)
+=== RUN   TestMinimumCapacityAllocates
+--- PASS: TestMinimumCapacityAllocates (0.02s)
+=== RUN   TestRetainedRewindAcrossEpochs
+--- PASS: TestRetainedRewindAcrossEpochs (0.21s)
+=== RUN   TestRecoveryLostWholeLogTail
+=== RUN   TestRecoveryLostWholeLogTail/async
+=== RUN   TestRecoveryLostWholeLogTail/sync
+--- PASS: TestRecoveryLostWholeLogTail (0.11s)
+    --- PASS: TestRecoveryLostWholeLogTail/async (0.07s)
+    --- PASS: TestRecoveryLostWholeLogTail/sync (0.04s)
+=== RUN   TestRecoverySyncPendingTouch
+--- PASS: TestRecoverySyncPendingTouch (0.16s)
+=== RUN   TestRewindRetentionBoundary
+--- PASS: TestRewindRetentionBoundary (0.08s)
+=== RUN   TestConcurrentTouchView
+--- PASS: TestConcurrentTouchView (0.02s)
+=== RUN   TestRecoveryInterruptedRewind
+=== RUN   TestRecoveryInterruptedRewind/intent
+=== RUN   TestRecoveryInterruptedRewind/partial_state
+=== RUN   TestRecoveryInterruptedRewind/removed_log
+--- PASS: TestRecoveryInterruptedRewind (0.43s)
+    --- PASS: TestRecoveryInterruptedRewind/intent (0.13s)
+    --- PASS: TestRecoveryInterruptedRewind/partial_state (0.15s)
+    --- PASS: TestRecoveryInterruptedRewind/removed_log (0.15s)
+=== RUN   TestRecoveryIncompleteRotation
+=== RUN   TestRecoveryIncompleteRotation/0
+=== RUN   TestRecoveryIncompleteRotation/16
+=== RUN   TestRecoveryIncompleteRotation/56
+--- PASS: TestRecoveryIncompleteRotation (0.35s)
+    --- PASS: TestRecoveryIncompleteRotation/0 (0.10s)
+    --- PASS: TestRecoveryIncompleteRotation/16 (0.15s)
+    --- PASS: TestRecoveryIncompleteRotation/56 (0.10s)
+=== RUN   TestRecoveryTornRecordChecksums
+=== RUN   TestRecoveryTornRecordChecksums/entry
+=== RUN   TestRecoveryTornRecordChecksums/block
+=== RUN   TestRecoveryTornRecordChecksums/checkpoint
+--- PASS: TestRecoveryTornRecordChecksums (0.49s)
+    --- PASS: TestRecoveryTornRecordChecksums/entry (0.22s)
+    --- PASS: TestRecoveryTornRecordChecksums/block (0.14s)
+    --- PASS: TestRecoveryTornRecordChecksums/checkpoint (0.12s)
+=== RUN   TestRecoveryRejectsStateBounds
+=== RUN   TestRecoveryRejectsStateBounds/short_file
+=== RUN   TestRecoveryRejectsStateBounds/long_file
+=== RUN   TestRecoveryRejectsStateBounds/log_offset
+--- PASS: TestRecoveryRejectsStateBounds (0.14s)
+    --- PASS: TestRecoveryRejectsStateBounds/short_file (0.02s)
+    --- PASS: TestRecoveryRejectsStateBounds/long_file (0.09s)
+    --- PASS: TestRecoveryRejectsStateBounds/log_offset (0.03s)
+=== RUN   TestRecoveryRebuildBatches
+--- PASS: TestRecoveryRebuildBatches (0.70s)
+=== RUN   TestRecoveryFailurePreservesUndo
+--- PASS: TestRecoveryFailurePreservesUndo (0.11s)
+=== RUN   TestSealBackpressure
+=== RUN   TestSealBackpressure/success
+=== RUN   TestSealBackpressure/failure
+--- PASS: TestSealBackpressure (0.04s)
+    --- PASS: TestSealBackpressure/success (0.03s)
+    --- PASS: TestSealBackpressure/failure (0.01s)
+=== RUN   TestDiskSort
+--- PASS: TestDiskSort (0.07s)
+=== RUN   TestEpochCumulativeLookup
+--- PASS: TestEpochCumulativeLookup (0.09s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10052824 allocated=11117736 elapsed=110.185734ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10829104 allocated=11334104 elapsed=1.282317906s
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2851952 allocated=2862432 elapsed=283.964851ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=4679752 allocated=4690232 elapsed=1.923444651s
+--- PASS: TestSealMemoryMeasure (4.34s)
+=== RUN   TestSealedRootReturnsNewest
+--- PASS: TestSealedRootReturnsNewest (0.03s)
+=== RUN   TestXORFrameValidation
+--- PASS: TestXORFrameValidation (0.00s)
+=== RUN   TestXORDenseIndexValidation
+--- PASS: TestXORDenseIndexValidation (0.00s)
+=== RUN   TestXORTrimNoopAndSameVersionOrder
+--- PASS: TestXORTrimNoopAndSameVersionOrder (0.03s)
+=== RUN   TestXORRunCopies
+--- PASS: TestXORRunCopies (0.12s)
+=== RUN   TestXORSameVersionRunCopies
+--- PASS: TestXORSameVersionRunCopies (0.06s)
+=== RUN   TestXOREpochVersionBounds
+--- PASS: TestXOREpochVersionBounds (0.00s)
+=== RUN   TestXOROverlappingTouchesAndWrites
+--- PASS: TestXOROverlappingTouchesAndWrites (0.24s)
+=== RUN   TestXORRetainedViewBeforePrunedSealedPrefix
+--- PASS: TestXORRetainedViewBeforePrunedSealedPrefix (0.27s)
+=== RUN   TestExportImport
+=== RUN   TestExportImport/8
+=== RUN   TestExportImport/7
+=== RUN   TestExportImport/2
+--- PASS: TestExportImport (0.30s)
+    --- PASS: TestExportImport/8 (0.08s)
+    --- PASS: TestExportImport/7 (0.12s)
+    --- PASS: TestExportImport/2 (0.07s)
+=== RUN   TestImageTreeSparse
+--- PASS: TestImageTreeSparse (0.01s)
+=== RUN   TestImageParserRejectsMalformed
+=== RUN   TestImageParserRejectsMalformed/header_truncated
+=== RUN   TestImageParserRejectsMalformed/leaf_truncated
+=== RUN   TestImageParserRejectsMalformed/trailing_bytes
+=== RUN   TestImageParserRejectsMalformed/missing_terminator
+=== RUN   TestImageParserRejectsMalformed/missing_header_leaf
+=== RUN   TestImageParserRejectsMalformed/capacity
+=== RUN   TestImageParserRejectsMalformed/state_length
+--- PASS: TestImageParserRejectsMalformed (0.06s)
+    --- PASS: TestImageParserRejectsMalformed/header_truncated (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/leaf_truncated (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/trailing_bytes (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/missing_terminator (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/missing_header_leaf (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/capacity (0.00s)
+    --- PASS: TestImageParserRejectsMalformed/state_length (0.00s)
+=== RUN   TestExportAfterRetentionPrunesLogs
+--- PASS: TestExportAfterRetentionPrunesLogs (0.51s)
+=== RUN   TestRewind
+--- PASS: TestRewind (1.34s)
+=== RUN   TestProof
+--- PASS: TestProof (0.34s)
+=== RUN   TestLargeRegion
+--- PASS: TestLargeRegion (0.45s)
+=== RUN   TestConcurrentViews
+--- PASS: TestConcurrentViews (0.90s)
+=== RUN   TestProofAfterUndo
+--- PASS: TestProofAfterUndo (0.02s)
+=== RUN   TestModel
+    model_test.go:183: regions 63 (large 3), segments 16, log entries 3736
+--- PASS: TestModel (32.17s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:189: set PAGERDB_RSS_TEST=1 for 4 GiB sparse mapping measurement
+--- SKIP: TestViewMapSparseRSS (0.00s)
+=== RUN   TestCrashChild
+    recovery_test.go:60: child process only
+--- SKIP: TestCrashChild (0.00s)
+=== RUN   TestRecoveryKill
+    recovery_test.go:118: round 0: child printed 40, recovered 40 with 12 torn tail entries, window 5 chunks, 2 sealed
+    recovery_test.go:118: round 1: child printed 40, recovered 40 with 19 torn tail entries, window 5 chunks, 2 sealed
+    recovery_test.go:118: round 2: child printed 40, recovered 40 with 12 torn tail entries, window 5 chunks, 2 sealed
+    recovery_test.go:118: round 3: child printed 40, recovered 40 with 12 torn tail entries, window 5 chunks, 2 sealed
+--- PASS: TestRecoveryKill (6.87s)
+=== RUN   TestRecoveryTornTail
+=== RUN   TestRecoveryTornTail/block_record
+=== RUN   TestRecoveryTornTail/entry
+--- PASS: TestRecoveryTornTail (1.25s)
+    --- PASS: TestRecoveryTornTail/block_record (0.43s)
+    --- PASS: TestRecoveryTornTail/entry (0.35s)
+=== RUN   TestParseRewindIntent
+=== RUN   TestParseRewindIntent/valid
+=== RUN   TestParseRewindIntent/short
+=== RUN   TestParseRewindIntent/long
+=== RUN   TestParseRewindIntent/magic
+=== RUN   TestParseRewindIntent/epoch
+=== RUN   TestParseRewindIntent/position
+=== RUN   TestParseRewindIntent/overflow
+--- PASS: TestParseRewindIntent (0.00s)
+    --- PASS: TestParseRewindIntent/valid (0.00s)
+    --- PASS: TestParseRewindIntent/short (0.00s)
+    --- PASS: TestParseRewindIntent/long (0.00s)
+    --- PASS: TestParseRewindIntent/magic (0.00s)
+    --- PASS: TestParseRewindIntent/epoch (0.00s)
+    --- PASS: TestParseRewindIntent/position (0.00s)
+    --- PASS: TestParseRewindIntent/overflow (0.00s)
+=== RUN   TestSparseSnapshot
+--- PASS: TestSparseSnapshot (0.00s)
+=== RUN   TestCommitVersionLimit
+--- PASS: TestCommitVersionLimit (0.08s)
+=== RUN   TestViews
+=== RUN   TestViews/epoch7
+    view_test.go:119: 81 versions, 80 from sealed epochs, 12 sealed epochs, window 13 chunks
+=== RUN   TestViews/epoch1000
+    view_test.go:119: 81 versions, 80 from sealed epochs, 1 sealed epochs, window 2 chunks
+--- PASS: TestViews (7.37s)
+    --- PASS: TestViews/epoch7 (4.10s)
+    --- PASS: TestViews/epoch1000 (3.27s)
+=== RUN   TestUserfaultfdConcurrentGC
+    viewmap_gc_linux_test.go:34: === RUN   TestUserfaultfdConcurrentGC
+            viewmap_gc_linux_test.go:131: native userfaultfd resolved four 8 MiB mappings during 1 GCs, page size 4096
+        --- PASS: TestUserfaultfdConcurrentGC (0.12s)
+        PASS
+
+--- PASS: TestUserfaultfdConcurrentGC (1.14s)
+=== RUN   TestUserfaultfdKernelIO
+    viewmap_gc_linux_test.go:147: === RUN   TestUserfaultfdKernelIO
+            viewmap_gc_linux_test.go:208: kernel-originated userfaultfd reads and writes passed, page size 4096
+        --- PASS: TestUserfaultfdKernelIO (0.03s)
+        PASS
+
+--- PASS: TestUserfaultfdKernelIO (1.05s)
+=== RUN   TestUserfaultfd
+    viewmap_linux_test.go:50: userfaultfd active; OS page size 4096
+--- PASS: TestUserfaultfd (0.08s)
+=== RUN   TestViewMap
+--- PASS: TestViewMap (0.08s)
+=== RUN   TestParallelViewMaps
+--- PASS: TestParallelViewMaps (0.03s)
+=== RUN   TestPrivateMapFallback
+--- PASS: TestPrivateMapFallback (0.02s)
+=== RUN   TestPrivateMapSmallSlots
+--- PASS: TestPrivateMapSmallSlots (0.02s)
+=== RUN   TestXORWorkloadMetrics
+    xor_bench_test.go:211: set PAGERDB_XOR_METRICS=1 for the 10001-version workload
+--- SKIP: TestXORWorkloadMetrics (0.00s)
+=== RUN   TestXORHistoryAfterLivePruning
+=== RUN   TestXORHistoryAfterLivePruning/1
+=== RUN   TestXORHistoryAfterLivePruning/13
+=== RUN   TestXORHistoryAfterLivePruning/23
+--- PASS: TestXORHistoryAfterLivePruning (0.65s)
+    --- PASS: TestXORHistoryAfterLivePruning/1 (0.07s)
+    --- PASS: TestXORHistoryAfterLivePruning/13 (0.08s)
+    --- PASS: TestXORHistoryAfterLivePruning/23 (0.07s)
+=== RUN   TestXORHistoryRewindRewrite
+--- PASS: TestXORHistoryRewindRewrite (0.85s)
+=== RUN   TestXORHistoryDropOldestEpochs
+--- PASS: TestXORHistoryDropOldestEpochs (0.43s)
+=== RUN   FuzzEpochFrame
+=== RUN   FuzzEpochFrame/seed#0
+=== RUN   FuzzEpochFrame/seed#1
+=== RUN   FuzzEpochFrame/seed#2
+=== RUN   FuzzEpochFrame/copy
+=== RUN   FuzzEpochFrame/truncated
+=== RUN   FuzzEpochFrame/valid
+--- PASS: FuzzEpochFrame (0.03s)
+    --- PASS: FuzzEpochFrame/seed#0 (0.00s)
+    --- PASS: FuzzEpochFrame/seed#1 (0.01s)
+    --- PASS: FuzzEpochFrame/seed#2 (0.00s)
+    --- PASS: FuzzEpochFrame/copy (0.01s)
+    --- PASS: FuzzEpochFrame/truncated (0.00s)
+    --- PASS: FuzzEpochFrame/valid (0.00s)
+=== RUN   FuzzEpochIndex
+=== RUN   FuzzEpochIndex/seed#0
+=== RUN   FuzzEpochIndex/seed#1
+=== RUN   FuzzEpochIndex/truncated
+=== RUN   FuzzEpochIndex/valid
+--- PASS: FuzzEpochIndex (0.00s)
+    --- PASS: FuzzEpochIndex/seed#0 (0.00s)
+    --- PASS: FuzzEpochIndex/seed#1 (0.00s)
+    --- PASS: FuzzEpochIndex/truncated (0.00s)
+    --- PASS: FuzzEpochIndex/valid (0.00s)
+=== RUN   FuzzExportImage
+=== RUN   FuzzExportImage/seed#0
+=== RUN   FuzzExportImage/seed#1
+=== RUN   FuzzExportImage/2d7950f3483d7840
+=== RUN   FuzzExportImage/6dfabee6e4f503b5
+--- PASS: FuzzExportImage (0.00s)
+    --- PASS: FuzzExportImage/seed#0 (0.00s)
+    --- PASS: FuzzExportImage/seed#1 (0.00s)
+    --- PASS: FuzzExportImage/2d7950f3483d7840 (0.00s)
+    --- PASS: FuzzExportImage/6dfabee6e4f503b5 (0.00s)
+=== RUN   FuzzLogRecords
+=== RUN   FuzzLogRecords/seed#0
+=== RUN   FuzzLogRecords/seed#1
+=== RUN   FuzzLogRecords/5d0dfc6f093ab36c
+=== RUN   FuzzLogRecords/70673a8f63003b7b
+--- PASS: FuzzLogRecords (0.00s)
+    --- PASS: FuzzLogRecords/seed#0 (0.00s)
+    --- PASS: FuzzLogRecords/seed#1 (0.00s)
+    --- PASS: FuzzLogRecords/5d0dfc6f093ab36c (0.00s)
+    --- PASS: FuzzLogRecords/70673a8f63003b7b (0.00s)
+=== RUN   FuzzBlockRecords
+=== RUN   FuzzBlockRecords/seed#0
+=== RUN   FuzzBlockRecords/e2ee502fd5a1eb6b
+--- PASS: FuzzBlockRecords (0.00s)
+    --- PASS: FuzzBlockRecords/seed#0 (0.00s)
+    --- PASS: FuzzBlockRecords/e2ee502fd5a1eb6b (0.00s)
+=== RUN   FuzzRewindIntent
+=== RUN   FuzzRewindIntent/seed#0
+=== RUN   FuzzRewindIntent/seed#1
+=== RUN   FuzzRewindIntent/short
+=== RUN   FuzzRewindIntent/valid
+--- PASS: FuzzRewindIntent (0.00s)
+    --- PASS: FuzzRewindIntent/seed#0 (0.00s)
+    --- PASS: FuzzRewindIntent/seed#1 (0.00s)
+    --- PASS: FuzzRewindIntent/short (0.00s)
+    --- PASS: FuzzRewindIntent/valid (0.00s)
+=== RUN   Example
+--- PASS: Example (0.02s)
+PASS
+ok  	github.com/containerman17/pagerdb	65.675s

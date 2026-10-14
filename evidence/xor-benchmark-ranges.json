@@ -1,0 +1,698 @@
+{
+  "evidence/xor-linux-amd64-bench-final.txt": {
+    "BenchmarkTreePath/Heap": {
+      "ns/op": [
+        224.3,
+        236.9,
+        3
+      ]
+    },
+    "BenchmarkTreePath/Tiles": {
+      "ns/op": [
+        654.3,
+        720.9,
+        3
+      ]
+    },
+    "BenchmarkWrite64": {
+      "ns/op": [
+        499.9,
+        546.3,
+        3
+      ],
+      "MB/s": [
+        117.15,
+        128.03,
+        3
+      ]
+    },
+    "BenchmarkCommit50k": {
+      "ns/op": [
+        115096250.0,
+        130541268.0,
+        3
+      ],
+      "leaves/s": [
+        383022.0,
+        434420.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadWindow": {
+      "ns/op": [
+        495.2,
+        509.7,
+        3
+      ],
+      "reads/s": [
+        1961903.0,
+        2019544.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadSealed": {
+      "ns/op": [
+        8724.0,
+        9312.0,
+        3
+      ],
+      "reads/s": [
+        107389.0,
+        114629.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/NoSync": {
+      "ns/op": [
+        365657.0,
+        366217.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/Sync": {
+      "ns/op": [
+        37068208.0,
+        52363379.0,
+        3
+      ]
+    },
+    "BenchmarkExport": {
+      "ns/op": [
+        27544725.0,
+        27940490.0,
+        3
+      ],
+      "MB/s": [
+        151.44,
+        153.61,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-arm64-bench-final.txt": {
+    "BenchmarkTreePath/Heap": {
+      "ns/op": [
+        157.5,
+        201.9,
+        3
+      ]
+    },
+    "BenchmarkTreePath/Tiles": {
+      "ns/op": [
+        543.5,
+        776.7,
+        3
+      ]
+    },
+    "BenchmarkWrite64": {
+      "ns/op": [
+        796.9,
+        939.1,
+        3
+      ],
+      "MB/s": [
+        68.15,
+        80.31,
+        3
+      ]
+    },
+    "BenchmarkCommit50k": {
+      "ns/op": [
+        37435496.0,
+        49115690.0,
+        3
+      ],
+      "leaves/s": [
+        1018033.0,
+        1335736.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadWindow": {
+      "ns/op": [
+        424.4,
+        869.6,
+        3
+      ],
+      "reads/s": [
+        1149980.0,
+        2356448.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadSealed": {
+      "ns/op": [
+        7318.0,
+        7459.0,
+        3
+      ],
+      "reads/s": [
+        134072.0,
+        136644.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/NoSync": {
+      "ns/op": [
+        61833.0,
+        70635.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/Sync": {
+      "ns/op": [
+        92056890.0,
+        132918714.0,
+        3
+      ]
+    },
+    "BenchmarkExport": {
+      "ns/op": [
+        8782578.0,
+        12621278.0,
+        3
+      ],
+      "MB/s": [
+        335.25,
+        481.78,
+        3
+      ]
+    }
+  },
+  "evidence/xor-macos-bench-final.txt": {
+    "BenchmarkTreePath/Heap": {
+      "ns/op": [
+        89.36,
+        103.7,
+        3
+      ]
+    },
+    "BenchmarkTreePath/Tiles": {
+      "ns/op": [
+        279.1,
+        293.1,
+        3
+      ]
+    },
+    "BenchmarkWrite64": {
+      "ns/op": [
+        252.3,
+        420.7,
+        3
+      ],
+      "MB/s": [
+        152.13,
+        253.64,
+        3
+      ]
+    },
+    "BenchmarkCommit50k": {
+      "ns/op": [
+        22286029.0,
+        29373797.0,
+        3
+      ],
+      "leaves/s": [
+        1702198.0,
+        2243560.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadWindow": {
+      "ns/op": [
+        571.0,
+        712.9,
+        3
+      ],
+      "reads/s": [
+        1402743.0,
+        1751242.0,
+        3
+      ]
+    },
+    "BenchmarkViewReadSealed": {
+      "ns/op": [
+        13534.0,
+        36427.0,
+        3
+      ],
+      "reads/s": [
+        27452.0,
+        73888.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/NoSync": {
+      "ns/op": [
+        75539.0,
+        91833.0,
+        3
+      ]
+    },
+    "BenchmarkDurabilityLoop/Sync": {
+      "ns/op": [
+        204635158.0,
+        306250799.0,
+        3
+      ]
+    },
+    "BenchmarkExport": {
+      "ns/op": [
+        8759738.0,
+        9370749.0,
+        3
+      ],
+      "MB/s": [
+        451.54,
+        483.04,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-amd64-cold.txt": {
+    "BenchmarkTreeColdPath/Heap": {
+      "ns/op": [
+        918805.0,
+        1207756.0,
+        3
+      ]
+    },
+    "BenchmarkTreeColdPath/Tiles": {
+      "ns/op": [
+        352691.0,
+        448376.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-arm64-cold.txt": {
+    "BenchmarkTreeColdPath/Heap": {
+      "ns/op": [
+        652455.0,
+        1016884.0,
+        3
+      ]
+    },
+    "BenchmarkTreeColdPath/Tiles": {
+      "ns/op": [
+        258254.0,
+        513159.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-macos-cold.txt": {
+    "BenchmarkTreeColdPath/Heap": {
+      "ns/op": [
+        48874.0,
+        67791.0,
+        3
+      ]
+    },
+    "BenchmarkTreeColdPath/Tiles": {
+      "ns/op": [
+        25926.0,
+        31753.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-amd64-mapping-open.txt": {
+    "BenchmarkViewMapFirstTouch": {
+      "ns/op": [
+        26625.0,
+        35738.0,
+        3
+      ],
+      "map-ns/op": [
+        89263.0,
+        142172.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/NoSync": {
+      "ns/op": [
+        41957674.0,
+        48961363.0,
+        3
+      ],
+      "MB/s": [
+        171.33,
+        199.93,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/Sync": {
+      "ns/op": [
+        89601592.0,
+        91727266.0,
+        3
+      ],
+      "MB/s": [
+        91.45,
+        93.62,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-arm64-mapping-open.txt": {
+    "BenchmarkViewMapFirstTouch": {
+      "ns/op": [
+        17646.0,
+        41500.0,
+        3
+      ],
+      "map-ns/op": [
+        54838.0,
+        368036.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/NoSync": {
+      "ns/op": [
+        28849844.0,
+        50661260.0,
+        3
+      ],
+      "MB/s": [
+        165.58,
+        290.77,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/Sync": {
+      "ns/op": [
+        91534490.0,
+        152475721.0,
+        3
+      ],
+      "MB/s": [
+        55.02,
+        91.64,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-macos-mapping-open.txt": {
+    "BenchmarkViewMapFirstTouch": {
+      "ns/op": [
+        13313.0,
+        24563.0,
+        3
+      ],
+      "map-ns/op": [
+        1188979.0,
+        1633092.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/NoSync": {
+      "ns/op": [
+        21692167.0,
+        23294562.0,
+        3
+      ],
+      "MB/s": [
+        360.11,
+        386.71,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    },
+    "BenchmarkOpenVerified/Sync": {
+      "ns/op": [
+        57983871.0,
+        61668596.0,
+        3
+      ],
+      "MB/s": [
+        136.03,
+        144.67,
+        3
+      ],
+      "data-MiB": [
+        4.0,
+        4.0,
+        3
+      ],
+      "state-B": [
+        8388608.0,
+        8388608.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-amd64-read-final.txt": {
+    "BenchmarkXORSealedRead/EVM/Back1": {
+      "ns/op": [
+        1114.0,
+        1189.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back100": {
+      "ns/op": [
+        11892.0,
+        13703.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back10000": {
+      "ns/op": [
+        1218146.0,
+        1231833.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back1": {
+      "ns/op": [
+        744.2,
+        829.2,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back100": {
+      "ns/op": [
+        10238.0,
+        10952.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back10000": {
+      "ns/op": [
+        1080970.0,
+        1244032.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-arm64-read-final.txt": {
+    "BenchmarkXORSealedRead/EVM/Back1": {
+      "ns/op": [
+        730.0,
+        842.1,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back100": {
+      "ns/op": [
+        9567.0,
+        10299.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back10000": {
+      "ns/op": [
+        1086712.0,
+        1380218.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back1": {
+      "ns/op": [
+        550.4,
+        607.9,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back100": {
+      "ns/op": [
+        5432.0,
+        6586.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back10000": {
+      "ns/op": [
+        760526.0,
+        933088.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-macos-read-final.txt": {
+    "BenchmarkXORSealedRead/EVM/Back1": {
+      "ns/op": [
+        1288.0,
+        1492.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back100": {
+      "ns/op": [
+        11472.0,
+        12074.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/EVM/Back10000": {
+      "ns/op": [
+        1544781.0,
+        1633783.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back1": {
+      "ns/op": [
+        819.6,
+        928.8,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back100": {
+      "ns/op": [
+        6091.0,
+        6556.0,
+        3
+      ]
+    },
+    "BenchmarkXORSealedRead/Random/Back10000": {
+      "ns/op": [
+        1630570.0,
+        1781492.0,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-amd64-sustained.txt": {
+    "BenchmarkSustained": {
+      "ns/op": [
+        11858655.0,
+        22685870.0,
+        3
+      ],
+      "blocks/s": [
+        44.08,
+        84.33,
+        3
+      ],
+      "p50-commit-ms": [
+        7.288,
+        9.595,
+        3
+      ],
+      "p99-commit-ms": [
+        18.77,
+        35.42,
+        3
+      ]
+    }
+  },
+  "evidence/xor-linux-arm64-sustained.txt": {
+    "BenchmarkSustained": {
+      "ns/op": [
+        6584176.0,
+        12471256.0,
+        3
+      ],
+      "blocks/s": [
+        80.18,
+        151.9,
+        3
+      ],
+      "p50-commit-ms": [
+        1.271,
+        1.528,
+        3
+      ],
+      "p99-commit-ms": [
+        9.212,
+        19.46,
+        3
+      ]
+    }
+  },
+  "evidence/xor-macos-sustained.txt": {
+    "BenchmarkSustained": {
+      "ns/op": [
+        5526891.0,
+        9482781.0,
+        3
+      ],
+      "blocks/s": [
+        105.5,
+        180.9,
+        3
+      ],
+      "p50-commit-ms": [
+        0.6723,
+        0.8139,
+        3
+      ],
+      "p99-commit-ms": [
+        9.71,
+        13.76,
+        3
+      ]
+    }
+  }
+}

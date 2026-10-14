@@ -1,0 +1,23 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       809.2 ns/op
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       842.1 ns/op
+BenchmarkXORSealedRead/EVM/Back1-7   	     100	       730.0 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	     10299 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	      9783 ns/op
+BenchmarkXORSealedRead/EVM/Back100-7 	     100	      9567 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	   1105807 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	   1086712 ns/op
+BenchmarkXORSealedRead/EVM/Back10000-7         	     100	   1380218 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       591.7 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       550.4 ns/op
+BenchmarkXORSealedRead/Random/Back1-7          	     100	       607.9 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      6586 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      5432 ns/op
+BenchmarkXORSealedRead/Random/Back100-7        	     100	      5870 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	    933088 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	    760526 ns/op
+BenchmarkXORSealedRead/Random/Back10000-7      	     100	    855040 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	4.763s

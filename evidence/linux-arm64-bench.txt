@@ -1,0 +1,28 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreePath/Heap-7       	    3884	     93859 ns/op
+BenchmarkTreePath/Heap-7       	   13893	     31357 ns/op
+BenchmarkTreePath/Heap-7       	   10000	     16291 ns/op
+BenchmarkTreePath/Tiles-7      	   10000	     14096 ns/op
+BenchmarkTreePath/Tiles-7      	   53064	      4491 ns/op
+BenchmarkTreePath/Tiles-7      	   30009	      6358 ns/op
+BenchmarkTreeColdPath/Heap-7   	      66	   2696681 ns/op
+BenchmarkTreeColdPath/Heap-7   	     104	   1331719 ns/op
+BenchmarkTreeColdPath/Heap-7   	     100	   1153785 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     940	    124317 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     945	    114178 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     963	    150916 ns/op
+BenchmarkWrite64-7             	    1869	     67891 ns/op	   0.94 MB/s
+BenchmarkWrite64-7             	    1576	    142289 ns/op	   0.45 MB/s
+BenchmarkWrite64-7             	    1536	     69968 ns/op	   0.91 MB/s
+BenchmarkCommit50k-7           	       1	2753838118 ns/op	     18157 leaves/s
+BenchmarkCommit50k-7           	       1	2916438040 ns/op	     17144 leaves/s
+BenchmarkCommit50k-7           	       1	1089353881 ns/op	     45900 leaves/s
+BenchmarkViewReadWindow-7      	   86086	      1542 ns/op	    648703 reads/s
+BenchmarkViewReadWindow-7      	  114948	      1552 ns/op	    644535 reads/s
+BenchmarkViewReadWindow-7      	   78303	      1443 ns/op	    693206 reads/s
+BenchmarkViewReadSealed-7      	   10074	     32125 ns/op	     31130 reads/s
+BenchmarkViewReadSealed-7      	signal: terminated
+FAIL	github.com/containerman17/pagerdb	356.743s
+FAIL

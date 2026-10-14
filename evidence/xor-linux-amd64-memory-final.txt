@@ -1,0 +1,29 @@
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10835960 allocated=11126208 elapsed=22.958999ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10632224 allocated=11334520 elapsed=49.97106ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2589704 allocated=2592616 elapsed=48.928472ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2590312 allocated=2600896 elapsed=295.244754ms
+--- PASS: TestSealMemoryMeasure (0.69s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 61857792 after 62177280 delta 319488 bytes
+--- PASS: TestViewMapSparseRSS (0.08s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10827032 allocated=11116816 elapsed=13.118071ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10828896 allocated=11333664 elapsed=40.997512ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2590480 allocated=2601080 elapsed=44.498948ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2600704 allocated=2600936 elapsed=307.156277ms
+--- PASS: TestSealMemoryMeasure (0.64s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 62320640 after 62693376 delta 372736 bytes
+--- PASS: TestViewMapSparseRSS (0.07s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10827256 allocated=11117280 elapsed=12.975236ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10828912 allocated=11333680 elapsed=41.379098ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2590160 allocated=2600624 elapsed=43.669693ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2600792 allocated=2600792 elapsed=295.472547ms
+--- PASS: TestSealMemoryMeasure (0.66s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 64065536 after 64184320 delta 118784 bytes
+--- PASS: TestViewMapSparseRSS (0.07s)
+PASS
+ok  	github.com/containerman17/pagerdb	2.251s

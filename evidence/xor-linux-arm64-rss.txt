@@ -1,0 +1,11 @@
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 10678272 after 10997760 delta 319488 bytes
+--- PASS: TestViewMapSparseRSS (0.05s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 13086720 after 13250560 delta 163840 bytes
+--- PASS: TestViewMapSparseRSS (0.03s)
+=== RUN   TestViewMapSparseRSS
+    product_bench_test.go:226: OS page size 4096; 4 GiB mapped, 16 pages touched; RSS before 14356480 after 14462976 delta 106496 bytes
+--- PASS: TestViewMapSparseRSS (0.03s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.111s

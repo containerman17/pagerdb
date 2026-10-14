@@ -1,0 +1,289 @@
+SIGQUIT: quit
+PC=0x444e8 m=0 sigcode=0
+
+goroutine 6353 gp=0xc0003801e0 m=0 mp=0x5dd220 [running]:
+runtime.memequal()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/internal/bytealg/equal_arm64.s:40 +0x28 fp=0xc0000ebcc0 sp=0xc0000ebcc0 pc=0x444e8
+bytes.Equal(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/bytes/bytes.go:22
+github.com/containerman17/pagerdb.TestViewMap(0xc0000f6248)
+	/Users/ilia/pagerdb/viewmap_test.go:48 +0x584 fp=0xc0000ebec0 sp=0xc0000ebcc0 pc=0x2ffe14
+testing.tRunner(0xc0000f6248, 0x3a4a60)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2036 +0x168 fp=0xc0000ebfa0 sp=0xc0000ebec0 pc=0x17f268
+testing.(*T).Run.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2101 +0x38 fp=0xc0000ebfd0 sp=0xc0000ebfa0 pc=0x180898
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0000ebfd0 sp=0xc0000ebfd0 pc=0xcefa4
+created by testing.(*T).Run in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2101 +0x7c0
+
+goroutine 1 gp=0xc0000043c0 m=nil [chan receive, 6 minutes]:
+runtime.gopark(0x30010e280?, 0xffff3c232d90?, 0xd8?, 0x36?, 0x18?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc000147630 sp=0xc000147610 pc=0xc749c
+runtime.chanrecv(0xc000074000, 0xc00014773e, 0x1)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/chan.go:667 +0x410 fp=0xc0001476c0 sp=0xc000147630 pc=0x593e0
+runtime.chanrecv1(0x5dbf00?, 0x33b4c0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/chan.go:509 +0x14 fp=0xc0001476f0 sp=0xc0001476c0 pc=0x58f94
+testing.(*T).Run(0xc000140008, {0x39109a, 0xb}, 0x3a4a60)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2109 +0x7dc fp=0xc000147840 sp=0xc0001476f0 pc=0x1806bc
+testing.runTests.func1(0xc000140008)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2585 +0x7c fp=0xc000147890 sp=0xc000147840 pc=0x183c8c
+testing.tRunner(0xc000140008, 0xc000147ab8)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2036 +0x168 fp=0xc000147970 sp=0xc000147890 pc=0x17f268
+testing.runTests({0x39a7ee, 0x21}, {0x39a7ee, 0x21}, 0xc000012060, {0x5d7720, 0x30, 0x30}, {0xc0000169c0?, 0xc00006a140?, ...})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2583 +0x7a4 fp=0xc000147ae0 sp=0xc000147970 pc=0x183b14
+testing.(*M).Run(0xc00010e1e0)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/testing/testing.go:2443 +0xb3c fp=0xc000147e60 sp=0xc000147ae0 pc=0x181a6c
+main.main()
+	_testmain.go:178 +0x104 fp=0xc000147f30 sp=0xc000147e60 pc=0x307444
+runtime.main()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:290 +0x2b4 fp=0xc000147fd0 sp=0xc000147f30 pc=0x90b24
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc000147fd0 sp=0xc000147fd0 pc=0xcefa4
+
+goroutine 2 gp=0xc000004f00 m=nil [runnable]:
+runtime.gopark(0x0?, 0x5b1a30?, 0x20?, 0xd2?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc00004a790 sp=0xc00004a770 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+runtime.forcegchelper()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:375 +0xb4 fp=0xc00004a7d0 sp=0xc00004a790 pc=0x90e44
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc00004a7d0 sp=0xc00004a7d0 pc=0xcefa4
+created by runtime.init.7 in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:363 +0x24
+
+goroutine 3 gp=0xc0000054a0 m=nil [GC sweep wait]:
+runtime.gopark(0x5dbd01?, 0x5dbda0?, 0x8?, 0x9?, 0x1?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc00005ef70 sp=0xc00005ef50 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+runtime.bgsweep(0xc000074000)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgcsweep.go:324 +0x178 fp=0xc00005efb0 sp=0xc00005ef70 pc=0x79e28
+runtime.gcenable.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:214 +0x20 fp=0xc00005efd0 sp=0xc00005efb0 pc=0x6b290
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc00005efd0 sp=0xc00005efd0 pc=0xcefa4
+created by runtime.gcenable in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:214 +0x6c
+
+goroutine 4 gp=0xc000005680 m=nil [GC scavenge wait]:
+runtime.gopark(0x10000?, 0xb7ef30?, 0x0?, 0x0?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc000058f60 sp=0xc000058f40 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+runtime.(*scavengerState).park(0x5dc340)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgcscavenge.go:425 +0x5c fp=0xc000058f90 sp=0xc000058f60 pc=0x7795c
+runtime.bgscavenge(0xc000074000)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgcscavenge.go:658 +0xac fp=0xc000058fb0 sp=0xc000058f90 pc=0x77edc
+runtime.gcenable.gowrap2()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:215 +0x20 fp=0xc000058fd0 sp=0xc000058fb0 pc=0x6b250
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc000058fd0 sp=0xc000058fd0 pc=0xcefa4
+created by runtime.gcenable in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:215 +0xac
+
+goroutine 5 gp=0xc000005c20 m=nil [GOMAXPROCS updater (idle), 8 minutes]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc00004af70 sp=0xc00004af50 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+runtime.updateMaxProcsGoroutine()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:7095 +0xf4 fp=0xc00004afd0 sp=0xc00004af70 pc=0x9fa24
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc00004afd0 sp=0xc00004afd0 pc=0xcefa4
+created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:7083 +0x48
+
+goroutine 6 gp=0xc0001045a0 m=nil [finalizer wait, 8 minutes]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc000059d80 sp=0xc000059d60 pc=0xc749c
+runtime.runFinalizers()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mfinal.go:210 +0x120 fp=0xc000059fd0 sp=0xc000059d80 pc=0x6a2b0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc000059fd0 sp=0xc000059fd0 pc=0xcefa4
+created by runtime.createfing in goroutine 1
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mfinal.go:172 +0x78
+
+goroutine 8 gp=0xc000104960 m=nil [GC worker (idle), 6 minutes]:
+runtime.gopark(0x24f53183231?, 0x3?, 0x8d?, 0x21?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a9f20 sp=0xc0004a9f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a9fb0 sp=0xc0004a9f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a9fd0 sp=0xc0004a9fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a9fd0 sp=0xc0004a9fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 9 gp=0xc000104b40 m=nil [GC worker (idle)]:
+runtime.gopark(0x24fe4ff9696?, 0x1?, 0x4e?, 0x6c?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a8f20 sp=0xc0004a8f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a8fb0 sp=0xc0004a8f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a8fd0 sp=0xc0004a8fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a8fd0 sp=0xc0004a8fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 10 gp=0xc000104d20 m=nil [GC worker (idle), 6 minutes]:
+runtime.gopark(0x24fe1a42cab?, 0x3?, 0xee?, 0x2?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a7f20 sp=0xc0004a7f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a7fb0 sp=0xc0004a7f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a7fd0 sp=0xc0004a7fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a7fd0 sp=0xc0004a7fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 11 gp=0xc000104f00 m=nil [GC worker (idle)]:
+runtime.gopark(0x24fe50020ee?, 0x3?, 0x73?, 0xda?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a6f20 sp=0xc0004a6f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a6fb0 sp=0xc0004a6f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a6fd0 sp=0xc0004a6fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a6fd0 sp=0xc0004a6fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 12 gp=0xc0001050e0 m=nil [GC worker (idle), 6 minutes]:
+runtime.gopark(0x24fe5000202?, 0xc00017e800?, 0x1c?, 0xa?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a5f20 sp=0xc0004a5f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a5fb0 sp=0xc0004a5f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a5fd0 sp=0xc0004a5fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a5fd0 sp=0xc0004a5fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 13 gp=0xc0001052c0 m=nil [GC worker (idle), 6 minutes]:
+runtime.gopark(0x24f53183bf5?, 0xc00017ea00?, 0x1c?, 0xa?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a4f20 sp=0xc0004a4f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a4fb0 sp=0xc0004a4f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a4fd0 sp=0xc0004a4fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a4fd0 sp=0xc0004a4fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 14 gp=0xc0001054a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x24fe4ffd82d?, 0x3?, 0xa6?, 0xe?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0004a3f20 sp=0xc0004a3f00 pc=0xc749c
+runtime.gcBgMarkWorker(0xc000100230)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1791 +0xe0 fp=0xc0004a3fb0 sp=0xc0004a3f20 pc=0x6dcf0
+runtime.gcBgMarkStartWorkers.gowrap1()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x20 fp=0xc0004a3fd0 sp=0xc0004a3fb0 pc=0x6dbf0
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0004a3fd0 sp=0xc0004a3fd0 pc=0xcefa4
+created by runtime.gcBgMarkStartWorkers in goroutine 7
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:1695 +0x134
+
+goroutine 4157 gp=0xc000381860 m=nil [cleanup wait, 6 minutes]:
+runtime.gopark(0xc000daaf60?, 0x0?, 0x0?, 0x0?, 0xd880c?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc000daaf10 sp=0xc000daaef0 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+runtime.(*cleanupQueue).dequeue(0x5dc620)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mcleanup.go:522 +0x160 fp=0xc000daaf50 sp=0xc000daaf10 pc=0x66b90
+runtime.runCleanups()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mcleanup.go:718 +0x3c fp=0xc000daafd0 sp=0xc000daaf50 pc=0x672dc
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc000daafd0 sp=0xc000daafd0 pc=0xcefa4
+created by runtime.(*cleanupQueue).createGs in goroutine 3392
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mcleanup.go:672 +0x108
+
+goroutine 6304 gp=0xc0000a1a40 m=3 mp=0xc00004f008 [stopping the world]:
+runtime.systemstack_switch()
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:347 +0x8 fp=0xc000025120 sp=0xc000025110 pc=0xccdd8
+runtime.gcStart({0xffff848c0108?, 0x2bf441?, 0x25280?})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/mgc.go:834 +0x410 fp=0xc000025250 sp=0xc000025120 pc=0x6bb40
+runtime.mallocgcSmallNoscan(0x0?, 0x2bf0dc?, 0x1?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/malloc.go:1500 +0x2b0 fp=0xc0000252b0 sp=0xc000025250 pc=0x61570
+runtime.mallocgc(0x400, 0x33b8c0, 0x1)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/malloc.go:1195 +0xb4 fp=0xc000025300 sp=0xc0000252b0 pc=0xc5524
+runtime.makeslice(0xc000025348?, 0x18?, 0x0?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/slice.go:117 +0x50 fp=0xc000025330 sp=0xc000025300 pc=0xc9c50
+github.com/containerman17/pagerdb.(*DB).readWindow(0xc00a1cc008, 0x5, 0x95ec00, {0xc0000256e0, 0x400, 0x400})
+	/Users/ilia/pagerdb/view.go:162 +0x78 fp=0xc0000254d0 sp=0xc000025330 pc=0x2d9a08
+github.com/containerman17/pagerdb.(*DB).sealedLeaf(0xc00a1cc008, 0x257b, 0x4, {0xc0000256e0, 0x400, 0x400})
+	/Users/ilia/pagerdb/epoch.go:818 +0x840 fp=0xc0000256a0 sp=0xc0000254d0 pc=0x2c1e10
+github.com/containerman17/pagerdb.(*View).readFile(0xc000112930, 0x95e000, {0xc0007f8000, 0x1000, 0x1000})
+	/Users/ilia/pagerdb/view.go:146 +0x330 fp=0xc000025b70 sp=0xc0000256a0 pc=0x2d98b0
+github.com/containerman17/pagerdb.(*View).Read.func1(0x95e000, 0x0, 0x1000)
+	/Users/ilia/pagerdb/view.go:108 +0x84 fp=0xc000025be0 sp=0xc000025b70 pc=0x2d9254
+github.com/containerman17/pagerdb.loc.each({0x600000, 0x0, {0xc0000186f0, 0x3, 0x3}}, 0x35e000, 0x1000, 0xc000025d88)
+	/Users/ilia/pagerdb/alloc.go:99 +0xf4 fp=0xc000025c80 sp=0xc000025be0 pc=0x2b39f4
+github.com/containerman17/pagerdb.(*View).Read(0xc000112930, 0x2, 0x35e000, 0x1000, {0xc0007f8000, 0x1000, 0x1000})
+	/Users/ilia/pagerdb/view.go:107 +0x244 fp=0xc000025dc0 sp=0xc000025c80 pc=0x2d9154
+github.com/containerman17/pagerdb.(*View).faultMap.func2()
+	/Users/ilia/pagerdb/viewmap_linux.go:87 +0x478 fp=0xc000025fd0 sp=0xc000025dc0 pc=0x2dd458
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc000025fd0 sp=0xc000025fd0 pc=0xcefa4
+created by github.com/containerman17/pagerdb.(*View).faultMap in goroutine 6353
+	/Users/ilia/pagerdb/viewmap_linux.go:52 +0x92c
+
+goroutine 6354 gp=0xc0004463c0 m=nil [sync.Cond.Wait]:
+runtime.gopark(0xc0000efe28?, 0xd69d0?, 0x28?, 0xfe?, 0xd69c4?)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:462 +0xbc fp=0xc0000efe00 sp=0xc0000efde0 pc=0xc749c
+runtime.goparkunlock(...)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/proc.go:468
+sync.runtime_notifyListWait(0xc00a1cc248, 0x1)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/sema.go:617 +0x194 fp=0xc0000efe50 sp=0xc0000efe00 pc=0xc9154
+sync.(*Cond).Wait(0xc00a1cc238)
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/sync/cond.go:71 +0x64 fp=0xc0000efe80 sp=0xc0000efe50 pc=0xd6514
+github.com/containerman17/pagerdb.(*DB).sealer(0xc00a1cc008)
+	/Users/ilia/pagerdb/epoch.go:154 +0xc0 fp=0xc0000effa0 sp=0xc0000efe80 pc=0x2b8250
+github.com/containerman17/pagerdb.(*DB).open.gowrap1()
+	/Users/ilia/pagerdb/recover.go:245 +0x30 fp=0xc0000effd0 sp=0xc0000effa0 pc=0x2d0320
+runtime.goexit({})
+	/Users/ilia/pagerdb/.scratch/linux-arm64/go/src/runtime/asm_arm64.s:1447 +0x4 fp=0xc0000effd0 sp=0xc0000effd0 pc=0xcefa4
+created by github.com/containerman17/pagerdb.(*DB).open in goroutine 6353
+	/Users/ilia/pagerdb/recover.go:245 +0xb70
+
+r0      0xffff31d5dfd9
+r1      0xc0000ebd17
+r2      0x40
+r3      0x40
+r4      0x2
+r5      0xffff84607800
+r6      0xffff31d5e019
+r7      0xffff8460782c
+r8      0x7
+r9      0x2bad0
+r10     0x5dd220
+r11     0x5dc7e0
+r12     0xfffff22297f0
+r13     0x3f
+r14     0x0
+r15     0x0
+r16     0xc0000e86c0
+r17     0xc0000eb590
+r18     0x3
+r19     0xc0000ebc60
+r20     0xa2990
+r21     0x0
+r22     0x0
+r23     0x0
+r24     0x0
+r25     0xc0000415a0
+r26     0xc0000eb570
+r27     0x654000
+r28     0xc0003801e0
+r29     0xc0000ebcb8
+lr      0x2ffe14
+sp      0xc0000ebcc0
+pc      0x444e8
+fault   0x0
+FAIL	github.com/containerman17/pagerdb	488.045s
+FAIL

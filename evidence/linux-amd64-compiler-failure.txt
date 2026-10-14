@@ -1,0 +1,251 @@
+go: downloading github.com/klauspost/compress v1.18.3
+go: downloading golang.org/x/sys v0.49.0
+# weak
+SIGSEGV: segmentation violation
+PC=0x461e22 m=2 sigcode=1 addr=0xeffff7d5f030
+
+goroutine 0 gp=0x3eb918130b40 m=2 mp=0x3eb91818e808 [idle]:
+runtime.runSafePointFn()
+	runtime/proc.go:2240 +0x42 fp=0x3eb9181a9c30 sp=0x3eb9181a9c18 pc=0x461e22
+runtime.findRunnable()
+	runtime/proc.go:3408 +0x65 fp=0x3eb9181a9e00 sp=0x3eb9181a9c30 pc=0x463e25
+runtime.schedule()
+	runtime/proc.go:4164 +0xb1 fp=0x3eb9181a9e40 sp=0x3eb9181a9e00 pc=0x465ef1
+runtime.goschedImpl(0x3eb918205680, 0x1)
+	runtime/proc.go:4345 +0x1e5 fp=0x3eb9181a9e98 sp=0x3eb9181a9e40 pc=0x4665a5
+runtime.gopreempt_m(...)
+	runtime/proc.go:4362
+runtime.newstack()
+	runtime/stack.go:1145 +0x41a fp=0x3eb9181a9fc8 sp=0x3eb9181a9e98 pc=0x479a5a
+runtime.morestack()
+	runtime/asm_amd64.s:681 +0x7d fp=0x3eb9181a9fd0 sp=0x3eb9181a9fc8 pc=0x49d89d
+
+goroutine 1 gp=0x3eb9181301e0 m=nil [runnable]:
+runtime.asyncPreempt2()
+	runtime/preempt.go:320 +0x14 fp=0x3eb918212288 sp=0x3eb918212268 pc=0x45c574
+runtime.asyncPreempt()
+	runtime/preempt_amd64.s:124 +0x28b fp=0x3eb918212310 sp=0x3eb918212288 pc=0x4a030b
+internal/buildcfg.GOGOARCH()
+	internal/buildcfg/cfg.go:385 fp=0x3eb918212318 sp=0x3eb918212310 pc=0x52dae0
+cmd/internal/objabi.HeaderString()
+	cmd/internal/objabi/util.go:26 +0x1f fp=0x3eb9182123e0 sp=0x3eb918212318 pc=0x57231f
+cmd/compile/internal/noder.readExportData(0x3eb918508098)
+	cmd/compile/internal/noder/import.go:244 +0x1a5 fp=0x3eb918212500 sp=0x3eb9182123e0 pc=0xea7b85
+cmd/compile/internal/noder.readImportFile({0x3eb9184fa721?, 0x7ffffffff8d2?}, 0x3eb91854e000, 0x3eb9181c8140, 0x3eb9181ca210)
+	cmd/compile/internal/noder/import.go:210 +0x345 fp=0x3eb9182127b8 sp=0x3eb918212500 pc=0xea7165
+cmd/compile/internal/noder.(*gcimports).ImportFrom(0x1992380?, {0x3eb9184fa721?, 0x3eb9181d0270?}, {0x526c25?, 0x109599b?}, 0x1c?)
+	cmd/compile/internal/noder/import.go:45 +0x34 fp=0x3eb9182127f0 sp=0x3eb9182127b8 pc=0xea6274
+cmd/compile/internal/types2.(*Checker).importPackage(0x3eb91812a200, {0x3eb9184ec540, 0x8, 0x2}, {0x3eb9184fa721, 0xc}, {0x7ffffffff9d0, 0x34})
+	cmd/compile/internal/types2/resolver.go:151 +0x595 fp=0x3eb918212908 sp=0x3eb9182127f0 pc=0xe63875
+cmd/compile/internal/types2.(*Checker).collectObjects(0x3eb91812a200)
+	cmd/compile/internal/types2/resolver.go:259 +0x1c05 fp=0x3eb918213008 sp=0x3eb918212908 pc=0xe656c5
+cmd/compile/internal/types2.(*Checker).checkFiles(0x3eb91812a200, {0x3eb9182132c8?, 0x3eb918200008?, 0x3eb91812a200?})
+	cmd/compile/internal/types2/check.go:500 +0x208 fp=0x3eb918213118 sp=0x3eb918213008 pc=0xe1c9c8
+cmd/compile/internal/types2.(*Checker).Files(0x10497e0?, {0x3eb9182132c8?, 0x0?, 0x0?})
+	cmd/compile/internal/types2/check.go:466 +0x75 fp=0x3eb918213180 sp=0x3eb918213118 pc=0xe1c715
+cmd/compile/internal/types2.(*Config).Check(0x3eb9181cc230, {0x7ffffffff8c5?, 0x3eb91813e0a7?}, {0x3eb9182132c8, 0x2, 0x2}, 0x3eb9181c6360)
+	cmd/compile/internal/types2/api.go:484 +0x19d fp=0x3eb9182131e8 sp=0x3eb918213180 pc=0xe06a5d
+cmd/compile/internal/noder.checkFiles({0x0, {0x0, 0x0}}, {0x3eb9184eab20, 0x2, 0x7?})
+	cmd/compile/internal/noder/irgen.go:95 +0x64a fp=0x3eb918213478 sp=0x3eb9182131e8 pc=0xea8c0a
+cmd/compile/internal/noder.writePkgStub({0x0?, {0x0?, 0x0?}}, {0x3eb9184eab20, 0x2, 0x2})
+	cmd/compile/internal/noder/unified.go:318 +0x6a fp=0x3eb918213738 sp=0x3eb918213478 pc=0xecf06a
+cmd/compile/internal/noder.unified({0x0?, {0x0?, 0x0?}}, {0x3eb9184eab20?, 0xf78aa0?, 0x1998f00?})
+	cmd/compile/internal/noder/unified.go:194 +0xb6 fp=0x3eb9182138b0 sp=0x3eb918213738 pc=0xece796
+cmd/compile/internal/noder.LoadPackage({0x3eb91824a160, 0x2, 0x2})
+	cmd/compile/internal/noder/noder.go:77 +0x509 fp=0x3eb9182139d8 sp=0x3eb9182138b0 pc=0xeae269
+cmd/compile/internal/gc.Main(0x10bd770)
+	cmd/compile/internal/gc/main.go:216 +0xce5 fp=0x3eb918213ee8 sp=0x3eb9182139d8 pc=0xf0c1e5
+main.main()
+	cmd/compile/main.go:57 +0xf9 fp=0x3eb918213f48 sp=0x3eb918213ee8 pc=0xf38719
+runtime.main()
+	runtime/proc.go:290 +0x2d5 fp=0x3eb918213fe0 sp=0x3eb918213f48 pc=0x45dc35
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb918213fe8 sp=0x3eb918213fe0 pc=0x49f1e1
+
+goroutine 2 gp=0x3eb918130780 m=nil [force gc (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb91818afa8 sp=0x3eb91818af88 pc=0x497cae
+runtime.goparkunlock(...)
+	runtime/proc.go:468
+runtime.forcegchelper()
+	runtime/proc.go:375 +0xb3 fp=0x3eb91818afe0 sp=0x3eb91818afa8 pc=0x45df53
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb91818afe8 sp=0x3eb91818afe0 pc=0x49f1e1
+created by runtime.init.7 in goroutine 1
+	runtime/proc.go:363 +0x1a
+
+goroutine 17 gp=0x3eb9182043c0 m=nil [GC sweep wait]:
+runtime.gopark(0x3eb918218000?, 0x10c0280?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918186750 sp=0x3eb918186730 pc=0x497cae
+runtime.goparkunlock(...)
+	runtime/proc.go:468
+runtime.bgsweep(0x3eb918218000)
+	runtime/mgcsweep.go:279 +0x94 fp=0x3eb9181867c8 sp=0x3eb918186750 pc=0x443614
+runtime.gcenable.gowrap1()
+	runtime/mgc.go:214 +0x17 fp=0x3eb9181867e0 sp=0x3eb9181867c8 pc=0x433297
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9181867e8 sp=0x3eb9181867e0 pc=0x49f1e1
+created by runtime.gcenable in goroutine 1
+	runtime/mgc.go:214 +0x66
+
+goroutine 18 gp=0x3eb9182045a0 m=nil [GC scavenge wait]:
+runtime.gopark(0x10000?, 0x10381a0?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918186f78 sp=0x3eb918186f58 pc=0x497cae
+runtime.goparkunlock(...)
+	runtime/proc.go:468
+runtime.(*scavengerState).park(0x1aaf920)
+	runtime/mgcscavenge.go:425 +0x49 fp=0x3eb918186fa8 sp=0x3eb918186f78 pc=0x440ea9
+runtime.bgscavenge(0x3eb918218000)
+	runtime/mgcscavenge.go:658 +0x59 fp=0x3eb918186fc8 sp=0x3eb918186fa8 pc=0x441439
+runtime.gcenable.gowrap2()
+	runtime/mgc.go:215 +0x17 fp=0x3eb918186fe0 sp=0x3eb918186fc8 pc=0x433257
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb918186fe8 sp=0x3eb918186fe0 pc=0x49f1e1
+created by runtime.gcenable in goroutine 1
+	runtime/mgc.go:215 +0xa5
+
+goroutine 19 gp=0x3eb918204780 m=nil [GOMAXPROCS updater (idle)]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918187788 sp=0x3eb918187768 pc=0x497cae
+runtime.goparkunlock(...)
+	runtime/proc.go:468
+runtime.updateMaxProcsGoroutine()
+	runtime/proc.go:7095 +0xe7 fp=0x3eb9181877e0 sp=0x3eb918187788 pc=0x46d007
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9181877e8 sp=0x3eb9181877e0 pc=0x49f1e1
+created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	runtime/proc.go:7083 +0x37
+
+goroutine 20 gp=0x3eb918204960 m=nil [finalizer wait]:
+runtime.gopark(0x46dfb5?, 0x400000?, 0x70?, 0xa6?, 0x433636?)
+	runtime/proc.go:462 +0xce fp=0x3eb91818a620 sp=0x3eb91818a600 pc=0x497cae
+runtime.runFinalizers()
+	runtime/mfinal.go:210 +0x107 fp=0x3eb91818a7e0 sp=0x3eb91818a620 pc=0x432087
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb91818a7e8 sp=0x3eb91818a7e0 pc=0x49f1e1
+created by runtime.createfing in goroutine 1
+	runtime/mfinal.go:172 +0x3d
+
+goroutine 21 gp=0x3eb918204b40 m=nil [cleanup wait]:
+runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918187f68 sp=0x3eb918187f48 pc=0x497cae
+runtime.goparkunlock(...)
+	runtime/proc.go:468
+runtime.(*cleanupQueue).dequeue(0x1aafca0)
+	runtime/mcleanup.go:522 +0xd4 fp=0x3eb918187fa0 sp=0x3eb918187f68 pc=0x42e6f4
+runtime.runCleanups()
+	runtime/mcleanup.go:718 +0x45 fp=0x3eb918187fe0 sp=0x3eb918187fa0 pc=0x42ed65
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb918187fe8 sp=0x3eb918187fe0 pc=0x49f1e1
+created by runtime.(*cleanupQueue).createGs in goroutine 1
+	runtime/mcleanup.go:672 +0xa5
+
+goroutine 22 gp=0x3eb918204d20 m=nil [GC worker (idle)]:
+runtime.gopark(0x3eb9182241c0?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918188730 sp=0x3eb918188710 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb9181887c8 sp=0x3eb918188730 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb9181887e0 sp=0x3eb9181887c8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9181887e8 sp=0x3eb9181887e0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 23 gp=0x3eb918204f00 m=nil [GC worker (idle)]:
+runtime.gopark(0x3eb9182241c0?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918188f30 sp=0x3eb918188f10 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb918188fc8 sp=0x3eb918188f30 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb918188fe0 sp=0x3eb918188fc8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb918188fe8 sp=0x3eb918188fe0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 24 gp=0x3eb9182050e0 m=nil [GC worker (idle)]:
+runtime.gopark(0x3eb9182241c0?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918189730 sp=0x3eb918189710 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb9181897c8 sp=0x3eb918189730 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb9181897e0 sp=0x3eb9181897c8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9181897e8 sp=0x3eb9181897e0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 25 gp=0x3eb9182052c0 m=nil [GC worker (idle)]:
+runtime.gopark(0x3eb9182241c0?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb918189f30 sp=0x3eb918189f10 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb918189fc8 sp=0x3eb918189f30 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb918189fe0 sp=0x3eb918189fc8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb918189fe8 sp=0x3eb918189fe0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 26 gp=0x3eb9182054a0 m=nil [GC worker (idle)]:
+runtime.gopark(0x3eb9182241c0?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb9185d8730 sp=0x3eb9185d8710 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb9185d87c8 sp=0x3eb9185d8730 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb9185d87e0 sp=0x3eb9185d87c8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9185d87e8 sp=0x3eb9185d87e0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 27 gp=0x3eb918205680 m=0 mp=0x1ab2d20 [GC mark termination]:
+runtime.systemstack_switch()
+	runtime/asm_amd64.s:516 +0x8 fp=0x3eb9185d8e90 sp=0x3eb9185d8e80 pc=0x49d728
+runtime.forEachP(...)
+	runtime/proc.go:2112
+runtime.gcMarkDone()
+	runtime/mgc.go:1042 +0x154 fp=0x3eb9185d8f30 sp=0x3eb9185d8e90 pc=0x434234
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1912 +0x2c8 fp=0x3eb9185d8fc8 sp=0x3eb9185d8f30 pc=0x436088
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb9185d8fe0 sp=0x3eb9185d8fc8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9185d8fe8 sp=0x3eb9185d8fe0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+goroutine 28 gp=0x3eb918205860 m=nil [GC worker (idle)]:
+runtime.gopark(0x9be831ce86?, 0x10c2af8?, 0x0?, 0x0?, 0x0?)
+	runtime/proc.go:462 +0xce fp=0x3eb9185d9730 sp=0x3eb9185d9710 pc=0x497cae
+runtime.gcBgMarkWorker(0x3eb9182241c0)
+	runtime/mgc.go:1791 +0xee fp=0x3eb9185d97c8 sp=0x3eb9185d9730 pc=0x435eae
+runtime.gcBgMarkStartWorkers.gowrap1()
+	runtime/mgc.go:1695 +0x17 fp=0x3eb9185d97e0 sp=0x3eb9185d97c8 pc=0x435d97
+runtime.goexit({})
+	runtime/asm_amd64.s:1771 +0x1 fp=0x3eb9185d97e8 sp=0x3eb9185d97e0 pc=0x49f1e1
+created by runtime.gcBgMarkStartWorkers in goroutine 1
+	runtime/mgc.go:1695 +0x105
+
+rax    0x3eb91816e008
+rbx    0x492800
+rcx    0x3eb91816e008
+rdx    0x10bf2c0
+rdi    0x3eb918205680
+rsi    0x0
+rbp    0x3eb9181a9c20
+rsp    0x3eb9181a9c18
+r8     0x1
+r9     0x7fffffffffffffff
+r10    0x6a
+r11    0x3eb918170568
+r12    0x3eb9181a9cb0
+r13    0x3eb918221f00
+r14    0x3eb918130b40
+r15    0x3eb918221f00
+rip    0x461e22
+rflags 0x202
+cs     0x33
+fs     0x3eb9
+gs     0x1816

@@ -1,0 +1,8 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkSustained-7   	   10000	   7908894 ns/op	       126.4 blocks/s	         1.271 p50-commit-ms	         9.212 p99-commit-ms
+BenchmarkSustained-7   	   10000	  12471256 ns/op	        80.18 blocks/s	         1.528 p50-commit-ms	        19.46 p99-commit-ms
+BenchmarkSustained-7   	   10000	   6584176 ns/op	       151.9 blocks/s	         1.383 p50-commit-ms	        13.06 p99-commit-ms
+PASS
+ok  	github.com/containerman17/pagerdb	270.702s

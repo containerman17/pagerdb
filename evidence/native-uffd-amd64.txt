@@ -8,14 +8,14 @@
             viewmap_gc_linux_test.go:131: native userfaultfd resolved four 8 MiB mappings during 1 GCs, page size 4096
         --- PASS: TestUserfaultfdConcurrentGC (0.12s)
         PASS
-        
+
 --- PASS: TestUserfaultfdConcurrentGC (1.19s)
 === RUN   TestUserfaultfdKernelIO
     viewmap_gc_linux_test.go:147: === RUN   TestUserfaultfdKernelIO
             viewmap_gc_linux_test.go:208: kernel-originated userfaultfd reads and writes passed, page size 4096
         --- PASS: TestUserfaultfdKernelIO (0.04s)
         PASS
-        
+
 --- PASS: TestUserfaultfdKernelIO (1.10s)
 === RUN   TestUserfaultfd
     viewmap_linux_test.go:50: userfaultfd active; OS page size 4096

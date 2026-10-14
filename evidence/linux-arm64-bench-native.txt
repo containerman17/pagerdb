@@ -1,0 +1,47 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreePath/Heap-7       	  559111	       251.7 ns/op
+BenchmarkTreePath/Heap-7       	  235749	       442.9 ns/op
+BenchmarkTreePath/Heap-7       	  373783	       537.7 ns/op
+BenchmarkTreePath/Tiles-7      	  105868	      5033 ns/op
+BenchmarkTreePath/Tiles-7      	   60870	      3117 ns/op
+BenchmarkTreePath/Tiles-7      	   64746	      2488 ns/op
+BenchmarkTreeColdPath/Heap-7   	      12	  21530815 ns/op
+BenchmarkTreeColdPath/Heap-7   	      10	  10817712 ns/op
+BenchmarkTreeColdPath/Heap-7   	      10	  10475325 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     144	   1584092 ns/op
+BenchmarkTreeColdPath/Tiles-7  	      68	   1471509 ns/op
+BenchmarkTreeColdPath/Tiles-7  	     111	   2416141 ns/op
+BenchmarkWrite64-7             	     100	   1611396 ns/op	   0.04 MB/s
+BenchmarkWrite64-7             	      88	   1274453 ns/op	   0.05 MB/s
+BenchmarkWrite64-7             	     645	    177673 ns/op	   0.36 MB/s
+BenchmarkCommit50k-7           	       1	 282757022 ns/op	    176842 leaves/s
+BenchmarkCommit50k-7           	       1	 484708406 ns/op	    103157 leaves/s
+BenchmarkCommit50k-7           	       1	 468338579 ns/op	    106763 leaves/s
+BenchmarkViewReadWindow-7      	   75625	      2811 ns/op	    355731 reads/s
+BenchmarkViewReadWindow-7      	   56832	      1889 ns/op	    529559 reads/s
+BenchmarkViewReadWindow-7      	   66379	      2762 ns/op	    362080 reads/s
+BenchmarkViewReadSealed-7      	    5433	     35980 ns/op	     27797 reads/s
+BenchmarkViewReadSealed-7      	    1184	    120251 ns/op	      8316 reads/s
+BenchmarkViewReadSealed-7      	    2017	    174308 ns/op	      5737 reads/s
+BenchmarkEpochCompression/EVM-7         	     819	    346171 ns/op	 202.28 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/EVM-7         	     680	    265028 ns/op	 264.21 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/EVM-7         	     460	    368132 ns/op	 190.21 MB/s	         0.2363 ratio
+BenchmarkEpochCompression/Random-7      	   10000	     16614 ns/op	4214.67 MB/s	         1.000 ratio
+BenchmarkEpochCompression/Random-7      	   10000	     18028 ns/op	3884.18 MB/s	         1.000 ratio
+BenchmarkEpochCompression/Random-7      	   10000	     16501 ns/op	4243.71 MB/s	         1.000 ratio
+BenchmarkDurabilityLoop/NoSync-7        	       6	  17551028 ns/op
+BenchmarkDurabilityLoop/NoSync-7        	       1	 100699520 ns/op
+BenchmarkDurabilityLoop/NoSync-7        	       1	 179219690 ns/op
+BenchmarkDurabilityLoop/Sync-7          	       1	1185268085 ns/op
+BenchmarkDurabilityLoop/Sync-7          	       1	1775923851 ns/op
+BenchmarkDurabilityLoop/Sync-7          	       1	1271388181 ns/op
+BenchmarkExport-7                       	       2	  81054458 ns/op	  52.20 MB/s
+BenchmarkExport-7                       	       4	  73425654 ns/op	  57.63 MB/s
+BenchmarkExport-7                       	       1	 164331217 ns/op	  25.75 MB/s
+BenchmarkViewMapFirstTouch-7            	     181	   1144643 ns/op	    206850 map-ns/op
+BenchmarkViewMapFirstTouch-7            	     512	    342927 ns/op	    351691 map-ns/op
+BenchmarkViewMapFirstTouch-7            	     570	    299065 ns/op	    133039 map-ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	315.706s

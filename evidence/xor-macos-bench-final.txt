@@ -1,0 +1,33 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreePath/Heap-8    	10547259	       103.7 ns/op
+BenchmarkTreePath/Heap-8    	13209700	        89.36 ns/op
+BenchmarkTreePath/Heap-8    	11596335	        94.73 ns/op
+BenchmarkTreePath/Tiles-8   	 4138716	       288.4 ns/op
+BenchmarkTreePath/Tiles-8   	 4150508	       293.1 ns/op
+BenchmarkTreePath/Tiles-8   	 4378069	       279.1 ns/op
+BenchmarkWrite64-8          	 4580160	       252.3 ns/op	 253.64 MB/s
+BenchmarkWrite64-8          	 3717381	       310.4 ns/op	 206.16 MB/s
+BenchmarkWrite64-8          	 4018434	       420.7 ns/op	 152.13 MB/s
+BenchmarkCommit50k-8        	      42	  27030495 ns/op	   1849765 leaves/s
+BenchmarkCommit50k-8        	      45	  22286029 ns/op	   2243560 leaves/s
+BenchmarkCommit50k-8        	      42	  29373797 ns/op	   1702198 leaves/s
+BenchmarkViewReadWindow-8   	 3191674	       712.9 ns/op	   1402743 reads/s
+BenchmarkViewReadWindow-8   	 2335209	       620.0 ns/op	   1612923 reads/s
+BenchmarkViewReadWindow-8   	 2306394	       571.0 ns/op	   1751242 reads/s
+BenchmarkViewReadSealed-8   	   71362	     36427 ns/op	     27452 reads/s
+BenchmarkViewReadSealed-8   	   79956	     13534 ns/op	     73888 reads/s
+BenchmarkViewReadSealed-8   	   82696	     16483 ns/op	     60668 reads/s
+BenchmarkDurabilityLoop/NoSync-8         	   19363	     75539 ns/op
+BenchmarkDurabilityLoop/NoSync-8         	   19856	     82491 ns/op
+BenchmarkDurabilityLoop/NoSync-8         	   18361	     91833 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       6	 206354326 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       5	 204635158 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       6	 306250799 ns/op
+BenchmarkExport-8                        	     130	   9126505 ns/op	 463.62 MB/s
+BenchmarkExport-8                        	     118	   9370749 ns/op	 451.54 MB/s
+BenchmarkExport-8                        	     116	   8759738 ns/op	 483.04 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	135.323s

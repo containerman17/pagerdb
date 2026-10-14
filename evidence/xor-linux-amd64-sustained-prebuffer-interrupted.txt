@@ -1,0 +1,7 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkSustained-7   	signal: terminated
+FAIL	github.com/containerman17/pagerdb	164.403s
+FAIL

@@ -1,0 +1,12 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkTreeColdPath/Heap-7         	     100	   1199256 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	   1207756 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	    918805 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    352691 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    366088 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    448376 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	0.775s

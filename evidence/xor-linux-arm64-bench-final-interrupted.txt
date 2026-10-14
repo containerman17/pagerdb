@@ -1,0 +1,15 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreePath/Heap-7    	 4156228	       459.3 ns/op
+BenchmarkTreePath/Heap-7    	 1000000	      1247 ns/op
+BenchmarkTreePath/Heap-7    	  182799	      6706 ns/op
+BenchmarkTreePath/Tiles-7   	  724352	      1881 ns/op
+BenchmarkTreePath/Tiles-7   	 1000000	      1158 ns/op
+BenchmarkTreePath/Tiles-7   	 1000000	      1050 ns/op
+BenchmarkWrite64-7          	  327499	      4226 ns/op	  15.15 MB/s
+BenchmarkWrite64-7          	  107881	     13557 ns/op	   4.72 MB/s
+BenchmarkWrite64-7          	  352496	      3759 ns/op	  17.03 MB/s
+BenchmarkCommit50k-7        	signal: terminated
+FAIL	github.com/containerman17/pagerdb	111.791s
+FAIL

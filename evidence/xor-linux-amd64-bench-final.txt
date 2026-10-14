@@ -1,0 +1,33 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkTreePath/Heap-7    	 5441380	       224.6 ns/op
+BenchmarkTreePath/Heap-7    	 5413712	       224.3 ns/op
+BenchmarkTreePath/Heap-7    	 5404788	       236.9 ns/op
+BenchmarkTreePath/Tiles-7   	 1664110	       720.9 ns/op
+BenchmarkTreePath/Tiles-7   	 1701030	       654.3 ns/op
+BenchmarkTreePath/Tiles-7   	 1579107	       716.1 ns/op
+BenchmarkWrite64-7          	 1901997	       546.3 ns/op	 117.15 MB/s
+BenchmarkWrite64-7          	 2262247	       499.9 ns/op	 128.03 MB/s
+BenchmarkWrite64-7          	 2214942	       520.7 ns/op	 122.92 MB/s
+BenchmarkCommit50k-7        	       8	 130541268 ns/op	    383022 leaves/s
+BenchmarkCommit50k-7        	       9	 115380358 ns/op	    433352 leaves/s
+BenchmarkCommit50k-7        	       9	 115096250 ns/op	    434420 leaves/s
+BenchmarkViewReadWindow-7   	 2419774	       495.2 ns/op	   2019544 reads/s
+BenchmarkViewReadWindow-7   	 2373636	       496.3 ns/op	   2014841 reads/s
+BenchmarkViewReadWindow-7   	 2411949	       509.7 ns/op	   1961903 reads/s
+BenchmarkViewReadSealed-7   	  129106	      9312 ns/op	    107389 reads/s
+BenchmarkViewReadSealed-7   	  132094	      8724 ns/op	    114629 reads/s
+BenchmarkViewReadSealed-7   	  128076	      8925 ns/op	    112050 reads/s
+BenchmarkDurabilityLoop/NoSync-7         	    3277	    366217 ns/op
+BenchmarkDurabilityLoop/NoSync-7         	    2914	    365657 ns/op
+BenchmarkDurabilityLoop/NoSync-7         	    2900	    365929 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      33	  37068208 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      31	  37103484 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      27	  52363379 ns/op
+BenchmarkExport-7                        	      42	  27576331 ns/op	 153.44 MB/s
+BenchmarkExport-7                        	      42	  27544725 ns/op	 153.61 MB/s
+BenchmarkExport-7                        	      43	  27940490 ns/op	 151.44 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	134.191s

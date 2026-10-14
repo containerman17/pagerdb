@@ -1,0 +1,32 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreePath/Heap-7    	 8145217	       157.5 ns/op
+BenchmarkTreePath/Heap-7    	 7452920	       201.9 ns/op
+BenchmarkTreePath/Heap-7    	 6484534	       192.2 ns/op
+BenchmarkTreePath/Tiles-7   	 1824463	       776.7 ns/op
+BenchmarkTreePath/Tiles-7   	 2123136	       651.8 ns/op
+BenchmarkTreePath/Tiles-7   	 2028345	       543.5 ns/op
+BenchmarkWrite64-7          	 1145929	       939.1 ns/op	  68.15 MB/s
+BenchmarkWrite64-7          	 1488956	       796.9 ns/op	  80.31 MB/s
+BenchmarkWrite64-7          	 1482976	       836.8 ns/op	  76.48 MB/s
+BenchmarkCommit50k-7        	      30	  49115690 ns/op	   1018033 leaves/s
+BenchmarkCommit50k-7        	      30	  46173134 ns/op	   1082896 leaves/s
+BenchmarkCommit50k-7        	      31	  37435496 ns/op	   1335736 leaves/s
+BenchmarkViewReadWindow-7   	 1681867	       759.4 ns/op	   1316762 reads/s
+BenchmarkViewReadWindow-7   	 1218036	       869.6 ns/op	   1149980 reads/s
+BenchmarkViewReadWindow-7   	 2375004	       424.4 ns/op	   2356448 reads/s
+BenchmarkViewReadSealed-7   	  152254	      7348 ns/op	    136086 reads/s
+BenchmarkViewReadSealed-7   	  156132	      7459 ns/op	    134072 reads/s
+BenchmarkViewReadSealed-7   	  153810	      7318 ns/op	    136644 reads/s
+BenchmarkDurabilityLoop/NoSync-7         	   20008	     70635 ns/op
+BenchmarkDurabilityLoop/NoSync-7         	   25813	     61833 ns/op
+BenchmarkDurabilityLoop/NoSync-7         	   14581	     68756 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      10	 114263582 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      13	 132918714 ns/op
+BenchmarkDurabilityLoop/Sync-7           	      15	  92056890 ns/op
+BenchmarkExport-7                        	     129	   8942090 ns/op	 473.19 MB/s
+BenchmarkExport-7                        	      97	  12621278 ns/op	 335.25 MB/s
+BenchmarkExport-7                        	     116	   8782578 ns/op	 481.78 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	153.268s

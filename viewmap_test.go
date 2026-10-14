@@ -145,7 +145,7 @@ func TestPrivateMapSmallSlots(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	// The second slot is not leaf-aligned.
+	// Exercise minimum-size allocations in adjacent slots.
 	for range 2 {
 		r, err := db.Alloc(64)
 		if err != nil {

@@ -1,0 +1,6 @@
+=== RUN   TestViewMap
+--- PASS: TestViewMap (0.37s)
+=== RUN   TestPrivateMapFallback
+--- PASS: TestPrivateMapFallback (0.06s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.437s

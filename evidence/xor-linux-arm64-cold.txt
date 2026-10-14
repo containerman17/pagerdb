@@ -1,0 +1,11 @@
+goos: linux
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+BenchmarkTreeColdPath/Heap-7         	     100	   1016884 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	    727616 ns/op
+BenchmarkTreeColdPath/Heap-7         	     100	    652455 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    258254 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    315271 ns/op
+BenchmarkTreeColdPath/Tiles-7        	     100	    513159 ns/op
+PASS
+ok  	github.com/containerman17/pagerdb	0.587s

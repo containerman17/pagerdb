@@ -1,0 +1,3 @@
+go: downloading github.com/klauspost/compress v1.18.3
+go: downloading golang.org/x/sys v0.49.0
+ok  	github.com/containerman17/pagerdb	278.213s

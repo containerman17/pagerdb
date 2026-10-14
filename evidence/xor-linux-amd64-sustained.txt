@@ -1,0 +1,9 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkSustained-7   	   10000	  22685870 ns/op	        44.08 blocks/s	         9.595 p50-commit-ms	        35.42 p99-commit-ms
+BenchmarkSustained-7   	   10000	  11858655 ns/op	        84.33 blocks/s	         7.288 p50-commit-ms	        18.77 p99-commit-ms
+BenchmarkSustained-7   	   10000	  14182238 ns/op	        70.51 blocks/s	         7.511 p50-commit-ms	        20.06 p99-commit-ms
+PASS
+ok  	github.com/containerman17/pagerdb	488.598s

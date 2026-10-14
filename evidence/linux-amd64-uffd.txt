@@ -1,0 +1,5 @@
+=== RUN   TestUserfaultfd
+    viewmap_linux_test.go:50: userfaultfd active; OS page size 4096
+--- PASS: TestUserfaultfd (0.26s)
+PASS
+ok  	github.com/containerman17/pagerdb	0.566s

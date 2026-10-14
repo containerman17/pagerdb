@@ -1,0 +1,20 @@
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10835816 allocated=11126240 elapsed=12.231483ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=11189008 allocated=11334216 elapsed=35.360773ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2592400 allocated=2592400 elapsed=35.178689ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2600712 allocated=2600904 elapsed=211.697763ms
+--- PASS: TestSealMemoryMeasure (0.45s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=11104840 allocated=11117352 elapsed=11.655271ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=11188816 allocated=11333896 elapsed=27.282813ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2588880 allocated=2600936 elapsed=31.497836ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2600848 allocated=2600864 elapsed=183.298944ms
+--- PASS: TestSealMemoryMeasure (0.38s)
+=== RUN   TestSealMemoryMeasure
+    epoch_v2_test.go:153: broad=false writes=8192 log_payload=1048576 peak_extra_heap=10826968 allocated=11117176 elapsed=17.753637ms
+    epoch_v2_test.go:153: broad=false writes=65536 log_payload=8388608 peak_extra_heap=10828912 allocated=11333432 elapsed=41.846475ms
+    epoch_v2_test.go:153: broad=true writes=8192 log_payload=1048576 peak_extra_heap=2592392 allocated=2592392 elapsed=51.989696ms
+    epoch_v2_test.go:153: broad=true writes=65536 log_payload=8388608 peak_extra_heap=2600472 allocated=2600560 elapsed=228.805855ms
+--- PASS: TestSealMemoryMeasure (0.49s)
+PASS
+ok  	github.com/containerman17/pagerdb	1.319s

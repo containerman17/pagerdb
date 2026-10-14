@@ -1,0 +1,33 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkTreePath/Heap-8    	 9805586	       114.7 ns/op
+BenchmarkTreePath/Heap-8    	12437574	       116.1 ns/op
+BenchmarkTreePath/Heap-8    	11328100	       101.3 ns/op
+BenchmarkTreePath/Tiles-8   	 3230400	       332.3 ns/op
+BenchmarkTreePath/Tiles-8   	 4087237	       325.4 ns/op
+BenchmarkTreePath/Tiles-8   	 3485433	       296.5 ns/op
+BenchmarkWrite64-8          	 3972483	       381.7 ns/op	 167.68 MB/s
+BenchmarkWrite64-8          	 4232056	       506.4 ns/op	 126.39 MB/s
+BenchmarkWrite64-8          	 2917944	       383.3 ns/op	 166.97 MB/s
+BenchmarkCommit50k-8        	      54	  25378770 ns/op	   1970152 leaves/s
+BenchmarkCommit50k-8        	      56	  21508774 ns/op	   2324635 leaves/s
+BenchmarkCommit50k-8        	      54	  25216856 ns/op	   1982802 leaves/s
+BenchmarkViewReadWindow-8   	 2029424	       611.4 ns/op	   1635617 reads/s
+BenchmarkViewReadWindow-8   	 2319093	       544.3 ns/op	   1837141 reads/s
+BenchmarkViewReadWindow-8   	 2847657	       396.8 ns/op	   2519957 reads/s
+BenchmarkViewReadSealed-8   	   92784	     12688 ns/op	     78814 reads/s
+BenchmarkViewReadSealed-8   	   54433	     23486 ns/op	     42578 reads/s
+BenchmarkViewReadSealed-8   	   57358	     23464 ns/op	     42618 reads/s
+BenchmarkDurabilityLoop/NoSync-8         	   15988	     88769 ns/op
+BenchmarkDurabilityLoop/NoSync-8         	   16605	     87271 ns/op
+BenchmarkDurabilityLoop/NoSync-8         	   13924	    119136 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       5	 242715783 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       5	 250601383 ns/op
+BenchmarkDurabilityLoop/Sync-8           	       5	 232488333 ns/op
+BenchmarkExport-8                        	     142	   8088873 ns/op	 523.10 MB/s
+BenchmarkExport-8                        	     144	   9642643 ns/op	 438.81 MB/s
+BenchmarkExport-8                        	     144	  10094921 ns/op	 419.15 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	183.635s

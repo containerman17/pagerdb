@@ -1,0 +1,39 @@
+goos: linux
+goarch: amd64
+pkg: github.com/containerman17/pagerdb
+cpu: VirtualApple @ 2.50GHz
+BenchmarkTreePath/Heap-7    	 5214490	       243.9 ns/op
+BenchmarkTreePath/Heap-7    	 5276361	       243.0 ns/op
+BenchmarkTreePath/Heap-7    	 4949688	       299.2 ns/op
+BenchmarkTreePath/Tiles-7   	 1096586	       916.9 ns/op
+BenchmarkTreePath/Tiles-7   	 1296542	       964.4 ns/op
+BenchmarkTreePath/Tiles-7   	 1000000	      1038 ns/op
+BenchmarkTreeColdPath/Heap-7         	   12948	     83519 ns/op
+BenchmarkTreeColdPath/Heap-7         	   18034	     64370 ns/op
+BenchmarkTreeColdPath/Heap-7         	   11748	     90663 ns/op
+BenchmarkTreeColdPath/Tiles-7        	   50322	     20338 ns/op
+BenchmarkTreeColdPath/Tiles-7        	   56949	     23864 ns/op
+BenchmarkTreeColdPath/Tiles-7        	   54391	     19388 ns/op
+BenchmarkWrite64-7                   	 1003791	      1718 ns/op	  37.25 MB/s
+BenchmarkWrite64-7                   	  572398	      1949 ns/op	  32.85 MB/s
+BenchmarkWrite64-7                   	  495834	      2020 ns/op	  31.68 MB/s
+BenchmarkCommit50k-7                 	       4	 288627344 ns/op	    173234 leaves/s
+BenchmarkCommit50k-7                 	       5	 223401813 ns/op	    223813 leaves/s
+BenchmarkCommit50k-7                 	       6	 209429305 ns/op	    238745 leaves/s
+BenchmarkViewReadWindow-7            	 1000000	      1086 ns/op	    920544 reads/s
+BenchmarkViewReadWindow-7            	 1000000	      1004 ns/op	    996464 reads/s
+BenchmarkViewReadWindow-7            	 1322806	      1066 ns/op	    937879 reads/s
+BenchmarkViewReadSealed-7            	  106334	     11832 ns/op	     84518 reads/s
+BenchmarkViewReadSealed-7            	  109423	     12164 ns/op	     82208 reads/s
+BenchmarkViewReadSealed-7            	   83338	     12818 ns/op	     78016 reads/s
+BenchmarkDurabilityLoop/NoSync-7     	    2650	    484706 ns/op
+BenchmarkDurabilityLoop/NoSync-7     	    2619	    779498 ns/op
+BenchmarkDurabilityLoop/NoSync-7     	    2288	    451839 ns/op
+BenchmarkDurabilityLoop/Sync-7       	       6	 229628274 ns/op
+BenchmarkDurabilityLoop/Sync-7       	      12	 994149654 ns/op
+BenchmarkDurabilityLoop/Sync-7       	       1	1472427253 ns/op
+BenchmarkExport-7                    	      14	  76641232 ns/op	  55.21 MB/s
+BenchmarkExport-7                    	      24	  48495554 ns/op	  87.25 MB/s
+BenchmarkExport-7                    	      22	  51201257 ns/op	  82.64 MB/s
+PASS
+ok  	github.com/containerman17/pagerdb	252.293s
