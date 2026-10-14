@@ -73,6 +73,7 @@ func (db *DB) undoEntries(pos, seq int64, cut bool) {
 			}
 		}
 		db.pieces = db.pieces[:e.piece-db.pieceBase]
+		clear(db.entries[i-db.entryBase:])
 		db.entries = db.entries[:i-db.entryBase]
 	}
 	if cut {

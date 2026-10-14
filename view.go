@@ -220,9 +220,10 @@ func (db *DB) dropChunks() {
 			if k < len(db.entries) {
 				pb = db.entries[k].piece
 			}
-			db.pieces = append([]piece(nil), db.pieces[pb-db.pieceBase:]...)
+			db.pieces = db.pieces[pb-db.pieceBase:]
 			db.pieceBase = pb
-			db.entries = append([]entry(nil), db.entries[k:]...)
+			clear(db.entries[:k])
+			db.entries = db.entries[k:]
 			db.entryBase += int64(k)
 			for l, p := range db.heads {
 				if p < db.pieceBase {
