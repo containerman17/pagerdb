@@ -2,6 +2,7 @@ package pagerdb
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -846,6 +847,76 @@ func TestSealedReadsDuringRewind(t *testing.T) {
 	for g := 0; g < 4; g++ {
 		if e = <-errs; e != nil {
 			t.Fatal(e)
+		}
+	}
+}
+
+// TestSealWithoutClone reruns history checks with the window reconstruction
+// that filesystems without cloning use.
+func TestSealWithoutClone(t *testing.T) {
+	saved := sealClone
+	sealClone = func(*DB) (*os.File, error) { return nil, errors.ErrUnsupported }
+	defer func() { sealClone = saved }()
+	t.Run("OverlappingTouches", TestXOROverlappingTouchesAndWrites)
+	t.Run("BaseCopies", TestXORBaseCopies)
+	t.Run("TrimNoop", TestXORTrimNoopAndSameVersionOrder)
+	t.Run("RunCopies", TestXORRunCopies)
+	t.Run("RewindRewrite", TestXORHistoryRewindRewrite)
+}
+
+// TestSealRunOverflow seals one epoch whose references exceed a worker's run
+// buffer, so the worker rescans the log after the shared routing pass.
+func TestSealRunOverflow(t *testing.T) {
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 13, EpochVersions: 50, RetainVersions: 1})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	const leaves = 16
+	r, e := db.Alloc(leaves * LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	first := db.loc(r).off / LeafSize
+	rng := rand.New(rand.NewPCG(3, 4))
+	snapshots := map[uint64][leaves * LeafSize]byte{}
+	var cur [leaves * LeafSize]byte
+	for v := 0; v < 60; v++ {
+		for k := 0; k < 1000; k++ {
+			var b [8]byte
+			le.PutUint64(b[:], rng.Uint64())
+			off := rng.IntN(leaves*LeafSize/8) * 8
+			db.Write(r, off, b[:])
+			copy(cur[off:], b[:])
+		}
+		_, ver, e := db.Commit()
+		if e != nil {
+			t.Fatal(e)
+		}
+		snapshots[ver] = cur
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	if pieces := 50 * 1000; pieces <= pieceRun {
+		t.Fatalf("epoch has %d references, not more than one run", pieces)
+	}
+	for v, want := range snapshots {
+		if v < db.sealed[0].start || v >= db.sealed[len(db.sealed)-1].end {
+			continue
+		}
+		for leaf := range leaves {
+			var got [LeafSize]byte
+			if e = db.sealedRange(first+uint64(leaf), v, 0, got[:]); e != nil {
+				t.Fatal(e)
+			}
+			if !bytes.Equal(got[:], want[leaf*LeafSize:(leaf+1)*LeafSize]) {
+				t.Fatalf("version %d leaf %d differs", v, leaf)
+			}
 		}
 	}
 }

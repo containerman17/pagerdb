@@ -9,18 +9,27 @@ import (
 	"slices"
 )
 
+// pieceRun is the number of 40-byte undo references in one sorted run.
+const pieceRun = 32768
+
 // diskSort bounds sorting memory to 4096 records and two merge buffers.
 // All scratch files belong to the caller's temporary directory.
-func diskSort(dir string, src *os.File, size int, less func([]byte, []byte) bool) (*os.File, error) {
-	return diskSortRuns(dir, src, size, less, nil)
+func diskSort(dir string, src *os.File, size int, less func([]byte, []byte) bool) (io.ReadCloser, error) {
+	if _, err := src.Seek(0, 0); err != nil {
+		return nil, err
+	}
+	return diskSortRuns(dir, func(b []byte) (int, error) { return io.ReadFull(src, b) }, size, less, nil)
 }
 
-func diskSortPieces(dir string, src *os.File) (*os.File, error) {
-	return diskSortPiecesBuffers(dir, src, &sealBuffers{})
+func diskSortPieces(dir string, src *os.File) (io.ReadCloser, error) {
+	if _, err := src.Seek(0, 0); err != nil {
+		return nil, err
+	}
+	return diskSortPiecesBuffers(dir, func(b []byte) (int, error) { return io.ReadFull(src, b) }, &sealBuffers{})
 }
 
-func diskSortPiecesBuffers(dir string, src *os.File, buffers *sealBuffers) (*os.File, error) {
-	return diskSortRuns(dir, src, 40, func(a, b []byte) bool {
+func diskSortPiecesBuffers(dir string, fill func([]byte) (int, error), buffers *sealBuffers) (io.ReadCloser, error) {
+	return diskSortRuns(dir, fill, 40, func(a, b []byte) bool {
 		if le.Uint64(a) != le.Uint64(b) {
 			return le.Uint64(a) < le.Uint64(b)
 		}
@@ -28,41 +37,38 @@ func diskSortPiecesBuffers(dir string, src *os.File, buffers *sealBuffers) (*os.
 	}, buffers)
 }
 
-func diskSortRuns(dir string, src *os.File, size int, less func([]byte, []byte) bool, buffers *sealBuffers) (*os.File, error) {
+// diskSortRuns sorts what fill supplies. fill behaves like io.ReadFull: a short
+// count means the input is exhausted. Input that fits one run never touches disk;
+// the returned reader then aliases the run buffer until the next sort with it.
+func diskSortRuns(dir string, fill func([]byte) (int, error), size int, less func([]byte, []byte) bool, buffers *sealBuffers) (io.ReadCloser, error) {
 	radix := buffers != nil
 	runRecords := 4096
 	if radix {
-		runRecords = 32768
+		runRecords = pieceRun
 	}
-	if _, err := src.Seek(0, 0); err != nil {
-		return nil, err
-	}
-	run, err := os.CreateTemp(dir, "sort-")
-	if err != nil {
-		return nil, err
-	}
+	var run *os.File
 	success := false
 	defer func() {
-		if !success {
+		if !success && run != nil {
 			run.Close()
 		}
 	}()
-	writer := bufio.NewWriterSize(run, 64<<10)
-	var buf, radixScratch []byte
+	var writer *bufio.Writer
+	var buf, scratch []byte
 	var rows [][]byte
 	if radix {
 		if buffers.sort == nil {
 			buffers.sort = make([]byte, size*runRecords)
 			buffers.radix = make([]byte, size*runRecords)
 		}
-		buf, radixScratch = buffers.sort, buffers.radix
+		buf, scratch = buffers.sort, buffers.radix
 	} else {
-		buf = make([]byte, size*runRecords)
+		buf, scratch = make([]byte, size*runRecords), make([]byte, size*runRecords)
 		rows = make([][]byte, runRecords)
 	}
 	var total int64
 	for {
-		n, e := io.ReadFull(src, buf)
+		n, e := fill(buf)
 		if e != nil && e != io.EOF && e != io.ErrUnexpectedEOF {
 			return nil, e
 		}
@@ -72,11 +78,10 @@ func diskSortRuns(dir string, src *os.File, size int, less func([]byte, []byte) 
 		if n%size != 0 {
 			return nil, io.ErrUnexpectedEOF
 		}
+		sorted := buf[:n]
 		if radix {
-			radixPieces(buf[:n], radixScratch[:n])
-			if _, e = writer.Write(buf[:n]); e != nil {
-				return nil, e
-			}
+			// Twelve passes leave the result back in buf.
+			radixPieces(buf[:n], scratch[:n])
 		} else {
 			for i := 0; i < n/size; i++ {
 				rows[i] = buf[i*size : (i+1)*size]
@@ -90,15 +95,32 @@ func diskSortRuns(dir string, src *os.File, size int, less func([]byte, []byte) 
 				}
 				return 0
 			})
-			for _, r := range rows[:n/size] {
-				if _, e = writer.Write(r); e != nil {
-					return nil, e
-				}
+			for i, r := range rows[:n/size] {
+				copy(scratch[i*size:], r)
 			}
+			sorted = scratch[:n]
+		}
+		if run == nil && n < len(buf) {
+			success = true
+			return io.NopCloser(bytes.NewReader(sorted)), nil
+		}
+		if run == nil {
+			var err error
+			if run, err = os.CreateTemp(dir, "sort-"); err != nil {
+				return nil, err
+			}
+			writer = bufio.NewWriterSize(run, 64<<10)
+		}
+		if _, e = writer.Write(sorted); e != nil {
+			return nil, e
 		}
 		total += int64(n)
 	}
-	if err = writer.Flush(); err != nil {
+	if run == nil {
+		success = true
+		return io.NopCloser(bytes.NewReader(nil)), nil
+	}
+	if err := writer.Flush(); err != nil {
 		return nil, err
 	}
 	x, y := make([]byte, size), make([]byte, size)
@@ -146,7 +168,7 @@ func diskSortRuns(dir string, src *os.File, size int, less func([]byte, []byte) 
 		os.Remove(run.Name())
 		run = next
 	}
-	_, err = run.Seek(0, 0)
+	_, err := run.Seek(0, 0)
 	success = err == nil
 	return run, err
 }

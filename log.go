@@ -32,6 +32,10 @@ type chunk struct {
 	m      []byte
 	tail   int64
 	sealed bool
+	// endState is a clone of the state file at the chunk's last version,
+	// taken at rotation when the filesystem supports cloning. The sealer
+	// reads epoch-end leaves from it without db.mu.
+	endState *os.File
 }
 
 type entry struct {
@@ -334,6 +338,9 @@ func (db *DB) Touch(r Region, off, n int) {
 	}
 }
 
+// sealClone is cloneState; tests replace it to exercise the window fallback.
+var sealClone = cloneState
+
 // rotate closes the current epoch and opens the next with a checkpoint mark.
 func (db *DB) rotate() error {
 	// Bound future history that the sealer must undo to reconstruct its end state.
@@ -362,6 +369,8 @@ func (db *DB) rotate() error {
 	if err := db.syncState(); err != nil {
 		return err
 	}
+	// Without cloning, the sealer reconstructs epoch-end leaves from the window.
+	old.endState, _ = sealClone(db)
 	c, err := db.newChunk(old.epoch+1, db.version, db.root)
 	if err != nil {
 		return err
@@ -381,8 +390,14 @@ func (db *DB) syncState() error {
 	if err := unix.Msync(db.tree, unix.MS_SYNC); err != nil {
 		return err
 	}
-	if err := db.stateF.Sync(); err != nil {
+	// On macOS File.Sync is F_FULLFSYNC, which flushes the whole drive cache, so
+	// a plain fsync for the state file followed by one full sync covers both.
+	// NoSync makes no power-loss promise and skips the drive cache flush.
+	if err := unix.Fsync(int(db.stateF.Fd())); err != nil {
 		return err
+	}
+	if !db.o.Sync {
+		return unix.Fsync(int(db.treeF.Fd()))
 	}
 	return db.treeF.Sync()
 }

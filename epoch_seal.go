@@ -14,14 +14,20 @@ import (
 type sealBuffers struct {
 	sort, radix, payload, compressed []byte
 	encoder                          *zstd.Encoder
+	// ends holds epoch-end images of upcoming leaves, read under one db.mu hold.
+	ends *[sealBatch][LeafSize]byte
 }
+
+// sealBatch bounds how many leaf images one db.mu hold reconstructs. Locking
+// per leaf made sealing workers and the owner's Write contend on db.mu.
+const sealBatch = 64
 
 type sealSection struct {
 	file                                 *os.File
 	dirBase, denseBase, indexOff, leaves uint64
 }
 
-func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, previous *sealedEpoch, oldStart, high uint64, buffers *sealBuffers) (section sealSection, result error) {
+func (db *DB) sealSection(dir string, c *chunk, end uint64, endState []byte, sorted io.Reader, previous *sealedEpoch, oldStart, high uint64, buffers *sealBuffers) (section sealSection, result error) {
 	create := func(name string) (*os.File, error) { return os.CreateTemp(dir, name) }
 	sr := bufio.NewReaderSize(sorted, 256<<10)
 	result = func() error {
@@ -99,6 +105,11 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 		}
 		payload, compressed := buffers.payload[:0], buffers.compressed[:0]
 		defer func() { buffers.payload, buffers.compressed = payload[:0], compressed[:0] }()
+		if buffers.ends == nil {
+			buffers.ends = new([sealBatch][LeafSize]byte)
+		}
+		var endLeaves [sealBatch]uint64
+		nEnds, endAt := 0, 0
 		var rec [40]byte
 		var inherited, indexRow [idxRec]byte
 		var frameDirectory [frameDirRec]byte
@@ -128,9 +139,29 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 			// Touch captures its final new bytes at Commit and can overlap later
 			// writes. Reconstruct the epoch-end leaf once, then derive each write's
 			// actual undo delta from the next newer state instead of stale new data.
-			db.mu.Lock()
-			db.readWindowRange(end, leaf, 0, boundary[:])
-			db.mu.Unlock()
+			// Prefer the rotation clone. Otherwise reconstruct from the window,
+			// batching this leaf with the next distinct leaves already buffered.
+			if uint64(len(endState)) >= (leaf+1)*LeafSize {
+				boundary = [LeafSize]byte(endState[leaf*LeafSize:])
+			} else {
+				if endAt == nEnds || endLeaves[endAt] != leaf {
+					endLeaves[0], nEnds, endAt = leaf, 1, 0
+					ahead, _ := sr.Peek(sr.Buffered())
+					for i := 0; i+40 <= len(ahead) && nEnds < sealBatch; i += 40 {
+						if l := le.Uint64(ahead[i:]); l != endLeaves[nEnds-1] {
+							endLeaves[nEnds] = l
+							nEnds++
+						}
+					}
+					db.mu.Lock()
+					for i, l := range endLeaves[:nEnds] {
+						db.readWindowRange(end, l, 0, buffers.ends[i][:])
+					}
+					db.mu.Unlock()
+				}
+				boundary = buffers.ends[endAt]
+				endAt++
+			}
 			payload = payload[:0]
 			flush := func(full bool) error {
 				if runCount == 0 {
@@ -325,14 +356,8 @@ func (db *DB) sealSection(dir string, c *chunk, end uint64, sorted *os.File, pre
 // parallelSeal assigns disjoint contiguous leaf ranges to workers. Each worker
 // uses fixed sorting and compression buffers; only section descriptors scale
 // with the worker count. Section offsets are relocated during sequential output.
-func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf uint64, pieces, roots *os.File) (*os.File, error) {
-	info, err := pieces.Stat()
-	if err != nil {
-		return nil, err
-	}
-	workers := min(runtime.GOMAXPROCS(0), max(1, int(info.Size()/40/4096)))
-	var rec [40]byte
-	reader := bufio.NewReaderSize(pieces, 256<<10)
+func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, nPieces, minLeaf, maxLeaf uint64, roots *os.File, endState []byte) (*os.File, error) {
+	workers := min(runtime.GOMAXPROCS(0), max(1, int(nPieces/4096)))
 	if minLeaf == ^uint64(0) {
 		minLeaf = 0
 	}
@@ -340,26 +365,23 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 	const buckets = 4096
 	width := (maxLeaf-minLeaf)/buckets + 1
 	var counts [buckets]uint64
-	if _, err = pieces.Seek(0, 0); err != nil {
-		return nil, err
-	}
-	reader.Reset(pieces)
+	all := pieceScan{c: c, pos: cpRec, high: 1 << 32}
+	refs := make([]byte, 40*1024)
 	for {
-		_, err = io.ReadFull(reader, rec[:])
-		if err == io.EOF {
+		n, _ := all.fill(refs)
+		if n == 0 {
 			break
 		}
-		if err != nil {
-			return nil, err
+		for at := 0; at < n; at += 40 {
+			counts[(le.Uint64(refs[at:])-minLeaf)/width]++
 		}
-		counts[(le.Uint64(rec[:])-minLeaf)/width]++
 	}
 	bounds := make([]uint64, 0, workers+1)
 	bounds = append(bounds, 0)
 	var cumulative uint64
 	for i, n := range counts {
 		cumulative += n
-		if n != 0 && len(bounds) < workers && cumulative >= uint64(info.Size()/40)*uint64(len(bounds))/uint64(workers) {
+		if n != 0 && len(bounds) < workers && cumulative >= nPieces*uint64(len(bounds))/uint64(workers) {
 			boundary := minLeaf + uint64(i+1)*width
 			if boundary <= maxLeaf {
 				bounds = append(bounds, boundary)
@@ -368,60 +390,15 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 	}
 	bounds = append(bounds, uint64(1)<<32)
 	workers = len(bounds) - 1
-	var bucketWorker [buckets]int
-	worker := 0
-	for bucket := range bucketWorker {
-		leaf := minLeaf + uint64(bucket)*width
-		for worker+1 < workers && leaf >= bounds[worker+1] {
-			worker++
-		}
-		bucketWorker[bucket] = worker
-	}
-	refs := make([]*os.File, workers)
-	writers := make([]*bufio.Writer, workers)
 	sections := make([]sealSection, workers)
 	errs := make([]error, workers)
 	defer func() {
-		for _, f := range refs {
-			if f != nil {
-				f.Close()
-			}
-		}
 		for _, s := range sections {
 			if s.file != nil {
 				s.file.Close()
 			}
 		}
 	}()
-	for i := range refs {
-		refs[i], err = os.CreateTemp(dir, "range-")
-		if err != nil {
-			return nil, err
-		}
-		writers[i] = bufio.NewWriterSize(refs[i], 256<<10)
-	}
-	if _, err = pieces.Seek(0, 0); err != nil {
-		return nil, err
-	}
-	reader.Reset(pieces)
-	for {
-		_, err = io.ReadFull(reader, rec[:])
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-		i := bucketWorker[(le.Uint64(rec[:])-minLeaf)/width]
-		if _, err = writers[i].Write(rec[:]); err != nil {
-			return nil, err
-		}
-	}
-	for _, w := range writers {
-		if err = w.Flush(); err != nil {
-			return nil, err
-		}
-	}
 	db.mu.Lock()
 	var previous *sealedEpoch
 	if len(db.sealed) > 0 {
@@ -434,12 +411,66 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 	for len(db.sealWorkers) < workers {
 		db.sealWorkers = append(db.sealWorkers, sealBuffers{})
 	}
+	// One pass routes references into each worker's run buffer. A worker whose
+	// buffer fills rescans the log itself from the first reference it missed,
+	// so the shared pass stays bounded by the fixed run buffers.
+	var bucketWorker [buckets]int
+	worker := 0
+	for bucket := range bucketWorker {
+		for worker+1 < workers && minLeaf+uint64(bucket)*width >= bounds[worker+1] {
+			worker++
+		}
+		bucketWorker[bucket] = worker
+	}
+	filled, from := make([]int, workers), make([]uint64, workers)
+	full := make([]bool, workers)
+	for i := range workers {
+		if db.sealWorkers[i].sort == nil {
+			db.sealWorkers[i].sort = make([]byte, 40*pieceRun)
+			db.sealWorkers[i].radix = make([]byte, 40*pieceRun)
+		}
+	}
+	all = pieceScan{c: c, pos: cpRec, high: 1 << 32}
+	for {
+		n, _ := all.fill(refs)
+		if n == 0 {
+			break
+		}
+		for at := 0; at < n; at += 40 {
+			i := bucketWorker[(le.Uint64(refs[at:])-minLeaf)/width]
+			if full[i] {
+				continue
+			}
+			if filled[i] == 40*pieceRun {
+				full[i], from[i] = true, le.Uint64(refs[at+8:])
+				continue
+			}
+			copy(db.sealWorkers[i].sort[filled[i]:], refs[at:at+40])
+			filled[i] += 40
+		}
+	}
 	var wg sync.WaitGroup
-	for i := range refs {
+	for i := range workers {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			sorted, e := diskSortPiecesBuffers(dir, refs[i], &db.sealWorkers[i])
+			// The first fill finds the routed references already in place.
+			first := true
+			scan := pieceScan{c: c, pos: cpRec, low: bounds[i], high: bounds[i+1], from: from[i]}
+			fill := func(buf []byte) (int, error) {
+				if first {
+					first = false
+					if full[i] {
+						return filled[i], nil
+					}
+					return filled[i], io.EOF
+				}
+				if !full[i] {
+					return 0, io.EOF
+				}
+				return scan.fill(buf)
+			}
+			sorted, e := diskSortPiecesBuffers(dir, fill, &db.sealWorkers[i])
 			if e != nil {
 				errs[i] = e
 				return
@@ -463,7 +494,7 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 					}
 				}
 			}
-			sections[i], errs[i] = db.sealSection(dir, c, end, sorted, previous, oldStart, high, &db.sealWorkers[i])
+			sections[i], errs[i] = db.sealSection(dir, c, end, endState, sorted, previous, oldStart, high, &db.sealWorkers[i])
 		}(i)
 	}
 	sortedRoots, rootErr := diskSort(dir, roots, rootRec, rootLess)
@@ -490,6 +521,7 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 		}
 	}()
 	ow := bufio.NewWriterSize(out, 1<<20)
+	reader := bufio.NewReaderSize(nil, 256<<10)
 	var header [epochHdr]byte
 	if _, err = ow.Write(header[:]); err != nil {
 		return nil, err
@@ -574,4 +606,50 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 	}
 	success = true
 	return out, nil
+}
+
+// pieceScan yields 40-byte undo references for leaves in [low, high) from a
+// sealed chunk: leaf, piece position, version, old-bytes position u64 each,
+// then leaf offset and length u16 each, then 4 zero bytes. fill resumes where
+// the previous call stopped and returns io.EOF once the chunk is exhausted.
+type pieceScan struct {
+	c         *chunk
+	pos       int64
+	p         uint64
+	low, high uint64
+	from      uint64 // skip pieces whose log position is below this
+}
+
+func (s *pieceScan) fill(buf []byte) (int, error) {
+	n := 0
+	for s.pos < s.c.tail {
+		r := s.c.m[s.pos:]
+		if r[0] != 'E' {
+			s.pos += blockRec
+			continue
+		}
+		size, ver, fo := uint64(le.Uint32(r[8:])), le.Uint64(r[16:]), le.Uint64(r[24:])
+		for s.p < size {
+			at := fo + s.p
+			k := min(size-s.p, LeafSize-at%LeafSize)
+			if leaf := at / LeafSize; leaf >= s.low && leaf < s.high && uint64(s.pos)+s.p >= s.from {
+				if n+40 > len(buf) {
+					return n, nil
+				}
+				ref := buf[n : n+40]
+				le.PutUint64(ref, leaf)
+				le.PutUint64(ref[8:], uint64(s.pos)+s.p)
+				le.PutUint64(ref[16:], ver)
+				le.PutUint64(ref[24:], uint64(s.pos)+entryHdr+s.p)
+				le.PutUint16(ref[32:], uint16(at%LeafSize))
+				le.PutUint16(ref[34:], uint16(k))
+				clear(ref[36:])
+				n += 40
+			}
+			s.p += k
+		}
+		s.pos += entryHdr + 2*int64(size)
+		s.p = 0
+	}
+	return n, io.EOF
 }

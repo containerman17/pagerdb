@@ -67,8 +67,8 @@ func (vw *View) Version() uint64 { return vw.v }
 func (vw *View) Close() {
 	db := vw.db
 	db.mu.Lock()
-	defer db.mu.Unlock()
 	if vw.closed {
+		db.mu.Unlock()
 		return
 	}
 	vw.closed = true
@@ -76,7 +76,9 @@ func (vw *View) Close() {
 	if db.pins[vw.v]--; db.pins[vw.v] == 0 {
 		delete(db.pins, vw.v)
 	}
-	db.dropChunks()
+	dropped := db.dropChunks()
+	db.mu.Unlock()
+	db.closeChunks(dropped)
 }
 
 // loc resolves r at the view's version. held means the caller holds db.mu
@@ -183,15 +185,15 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 }
 
 // dropChunks removes sealed chunks from the window once no view needs them. Caller holds db.mu.
-func (db *DB) dropChunks() {
+func (db *DB) dropChunks() (dropped []*chunk) {
 	for len(db.chunks) > 1 && db.chunks[0].sealed {
 		c, next := db.chunks[0], db.chunks[1].start
 		if db.version <= db.o.RetainVersions || next > db.version-db.o.RetainVersions {
-			return
+			return dropped
 		}
 		for pv := range db.pins {
 			if pv < next {
-				return
+				return dropped
 			}
 		}
 		k := 0
@@ -221,6 +223,15 @@ func (db *DB) dropChunks() {
 			return b.c == c
 		})
 		db.chunks = db.chunks[1:]
+		dropped = append(dropped, c)
+	}
+	return dropped
+}
+
+// closeChunks unmaps and deletes chunks that dropChunks unlinked. Callers run
+// it after releasing db.mu, so the owner does not wait for munmap and unlink.
+func (db *DB) closeChunks(dropped []*chunk) {
+	for _, c := range dropped {
 		c.close()
 		os.Remove(db.chunkPath(c.epoch))
 	}

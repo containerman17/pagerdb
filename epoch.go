@@ -192,6 +192,10 @@ func (db *DB) sealer() {
 		if !failed {
 			err = db.seal(c)
 		}
+		if c.endState != nil {
+			c.endState.Close()
+			c.endState = nil
+		}
 		db.mu.Lock()
 		if err != nil {
 			db.sealErr = fmt.Errorf("pagerdb: seal epoch %d: %w", c.epoch, err)
@@ -245,7 +249,8 @@ func (db *DB) Seal() error {
 	return db.sealErr
 }
 
-// seal sorts undo references on disk, then trims and writes newest-first XOR runs.
+// seal validates the chunk, then sorts undo references by leaf with bounded
+// memory and writes trimmed newest-first XOR runs.
 func (db *DB) seal(c *chunk) error {
 	dir, err := os.MkdirTemp(db.dir, "seal-")
 	if err != nil {
@@ -253,26 +258,20 @@ func (db *DB) seal(c *chunk) error {
 	}
 	defer os.RemoveAll(dir)
 	create := func(name string) (*os.File, error) { return os.CreateTemp(dir, name) }
-	pieces, err := create("pieces-")
-	if err != nil {
-		return err
-	}
-	defer pieces.Close()
 	roots, err := create("roots-")
 	if err != nil {
 		return err
 	}
 	defer roots.Close()
-	pw, rw := bufio.NewWriterSize(pieces, 64<<10), bufio.NewWriterSize(roots, 64<<10)
+	rw := bufio.NewWriterSize(roots, 64<<10)
 	var rr [rootRec]byte
 	copy(rr[:32], c.m[16:48])
 	le.PutUint64(rr[32:], c.start)
 	if _, err = rw.Write(rr[:]); err != nil {
 		return err
 	}
-	end, nRoots := c.start, uint64(1)
+	end, nRoots, nPieces := c.start, uint64(1), uint64(0)
 	minLeaf, maxLeaf := ^uint64(0), uint64(0)
-	var ref [40]byte
 	for pos := int64(cpRec); pos < c.tail; {
 		r := c.m[pos:]
 		switch r[0] {
@@ -284,17 +283,8 @@ func (db *DB) seal(c *chunk) error {
 			for p := uint64(0); p < n; {
 				at := fo + p
 				minLeaf, maxLeaf = min(minLeaf, at/LeafSize), max(maxLeaf, at/LeafSize)
-				k := min(n-p, LeafSize-at%LeafSize)
-				oldAt := uint64(pos) + entryHdr + p
-				for i, v := range []uint64{at / LeafSize, uint64(pos) + p, ver, oldAt} {
-					le.PutUint64(ref[i*8:], v)
-				}
-				le.PutUint16(ref[32:], uint16(at%LeafSize))
-				le.PutUint16(ref[34:], uint16(k))
-				if _, err = pw.Write(ref[:]); err != nil {
-					return err
-				}
-				p += k
+				nPieces++
+				p += min(n-p, LeafSize-at%LeafSize)
 			}
 			pos += entryHdr + 2*int64(n)
 		case 'B':
@@ -313,13 +303,21 @@ func (db *DB) seal(c *chunk) error {
 			return fmt.Errorf("pagerdb: invalid log record while sealing")
 		}
 	}
-	if err = pw.Flush(); err != nil {
-		return err
-	}
 	if err = rw.Flush(); err != nil {
 		return err
 	}
-	out, err := db.parallelSeal(dir, c, end, nRoots, minLeaf, maxLeaf, pieces, roots)
+	var endState []byte
+	if c.endState != nil {
+		if fi, e := c.endState.Stat(); e == nil && fi.Size() > 0 {
+			if endState, e = unix.Mmap(int(c.endState.Fd()), 0, int(fi.Size()), unix.PROT_READ, unix.MAP_SHARED); e != nil {
+				endState = nil
+			}
+		}
+		if endState != nil {
+			defer unix.Munmap(endState)
+		}
+	}
+	out, err := db.parallelSeal(dir, c, end, nRoots, nPieces, minLeaf, maxLeaf, roots, endState)
 	if err != nil {
 		return err
 	}
@@ -332,10 +330,11 @@ func (db *DB) seal(c *chunk) error {
 		return err
 	}
 	db.mu.Lock()
-	defer db.mu.Unlock()
 	db.sealed = append(db.sealed, sealed)
 	c.sealed = true
-	db.dropChunks()
+	dropped := db.dropChunks()
+	db.mu.Unlock()
+	db.closeChunks(dropped)
 	return nil
 }
 
