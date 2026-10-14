@@ -465,7 +465,37 @@ func (db *DB) seal(c *chunk) error {
 func (db *DB) sealBaseLeaf(lastChanged, leaf, version uint64, out []byte) error {
 	db.mu.Lock()
 	if lastChanged == 0 {
-		db.readWindow(version, leaf*LeafSize, out)
+		// The existing per-leaf chain is already newest first. Applying old
+		// bytes directly avoids an epoch-sized temporary sequence slice.
+		var covered [LeafSize]bool
+		off := leaf * LeafSize
+		p, ok := db.heads[uint32(leaf)]
+		for ok && p >= db.pieceBase {
+			piece := db.pieces[p-db.pieceBase]
+			entry := db.entries[piece.entry-db.entryBase]
+			if entry.ver <= version {
+				break
+			}
+			lo, hi := max(entry.off, off), min(entry.off+uint64(entry.n), off+LeafSize)
+			copy(out[lo-off:hi-off], entry.c.m[entry.pos+entryHdr+int64(lo-entry.off):])
+			for i := lo - off; i < hi-off; i++ {
+				covered[i] = true
+			}
+			p = piece.prev
+		}
+		// Bytes covered by a later log entry are never read from the live
+		// mapping, where the owner can write concurrently through Map.
+		for i := 0; i < LeafSize; {
+			if covered[i] {
+				i++
+				continue
+			}
+			start := i
+			for i < LeafSize && !covered[i] {
+				i++
+			}
+			copy(out[start:i], db.state[off+uint64(start):off+uint64(i)])
+		}
 		db.mu.Unlock()
 		return nil
 	}
