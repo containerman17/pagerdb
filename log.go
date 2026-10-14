@@ -180,6 +180,7 @@ type logState struct {
 	blockStart int64    // log position of the pending block's first entry
 	blockSeq   int64    // entry seq of the pending block's first entry
 	touches    []int64  // Touch entries of the pending block, new bytes filled at Commit
+	pending    []int64  // records awaiting the window index
 
 	entries seqBuf[entry]
 	pieces  seqBuf[piece]
@@ -202,7 +203,17 @@ type logState struct {
 	windowStart uint64
 }
 
-func (db *DB) seq() int64      { return db.entries.end }
+func (db *DB) seq() int64 { db.indexPending(); return db.entries.end }
+
+// indexPending materializes the window index only when a reader or Commit needs it.
+// Caller holds db.mu.
+func (db *DB) indexPending() {
+	for _, pos := range db.pending {
+		m := db.cur.m[pos:]
+		db.index(db.cur, pos, le.Uint64(m[16:]), le.Uint64(m[24:]), uint64(le.Uint32(m[8:])))
+	}
+	db.pending = db.pending[:0]
+}
 func (db *DB) pieceSeq() int64 { return db.pieces.end }
 
 func (db *DB) chunkPath(epoch uint64) string {
@@ -367,23 +378,20 @@ func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	le.PutUint64(e[16:], db.version+1)
 	le.PutUint64(e[24:], fo)
 	copy(e[entryHdr:entryHdr+n], db.state[fo:])
-	if b != nil {
-		copy(e[entryHdr+n:], b)
-	}
 	le.PutUint32(e[4:], entryChecksum(e, n))
 	e[0] = 'E'
 	if b != nil {
 		copy(db.state[fo:fo+n], b)
 	}
 	db.markDirty(fo, n)
-	db.index(db.cur, pos, db.version+1, fo, n)
+	db.pending = append(db.pending, pos)
 	return pos
 }
 
 func (db *DB) put(r Region, fo uint64, b []byte) { db.logEntry(r, fo, uint64(len(b)), b) }
 
 func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
-	seq := db.seq()
+	seq := db.entries.end
 	if db.entries.len() >= math.MaxUint32 || db.pieces.len() >= math.MaxUint32-LeafSize {
 		panic("pagerdb: window holds 2^32 log entries; reduce RetainVersions")
 	}

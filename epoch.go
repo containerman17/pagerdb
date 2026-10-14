@@ -380,6 +380,7 @@ func (db *DB) seal(c *chunk) error {
 // Caller holds db.mu. It reads mutable head bytes only if no later log covers
 // them, so a reader never races an owner's Touch-announced Map write.
 func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
+	db.indexPending()
 	off := leaf*LeafSize + offset
 	end := off + uint64(len(out))
 	p, ok := db.heads.get(uint32(leaf))

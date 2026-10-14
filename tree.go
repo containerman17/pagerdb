@@ -214,10 +214,7 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 		return db.root, db.version, errors.New("pagerdb: version limit reached")
 	}
 	c := db.cur
-	for _, pos := range db.touches {
-		n, fo := int64(le.Uint32(c.m[pos+8:])), le.Uint64(c.m[pos+24:])
-		copy(c.m[pos+entryHdr+n:pos+entryHdr+2*n], db.state[fo:])
-	}
+	db.fillNewBytes()
 	db.touches = db.touches[:0]
 	root := db.hashDirty()
 	pos := db.reserve(blockRec)
@@ -239,4 +236,31 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 		}
 	}
 	return root, db.version, nil
+}
+
+// fillNewBytes walks each dirty leaf backwards through this block. A private
+// leaf image supplies each record's new bytes before its undo bytes are applied.
+// Separate leaves write disjoint record ranges, including cross-leaf records.
+func (db *DB) fillNewBytes() {
+	db.indexPending()
+	parallel(len(db.dirty), func(lo, hi int) {
+		var buf [LeafSize]byte
+		for _, leaf := range db.dirty[lo:hi] {
+			off := uint64(leaf) * LeafSize
+			copy(buf[:], db.state[off:off+LeafSize])
+			p, ok := db.heads.get(leaf)
+			for ok && p >= db.pieces.base {
+				pc := *db.pieces.at(p)
+				e := db.entries.at(db.pieceEntry(pc))
+				if e.ver <= db.version {
+					break
+				}
+				m, eo, en := db.rec(e)
+				a, z := max(off, eo), min(off+LeafSize, eo+en)
+				copy(m[entryHdr+en+a-eo:entryHdr+en+z-eo], buf[a-off:z-off])
+				copy(buf[a-off:z-off], m[entryHdr+a-eo:entryHdr+z-eo])
+				p, ok = db.prevPiece(p, pc)
+			}
+		}
+	})
 }
