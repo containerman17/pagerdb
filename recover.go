@@ -3,6 +3,7 @@ package pagerdb
 import (
 	"fmt"
 	"hash/crc32"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,13 +45,24 @@ func (db *DB) undo(m Mark) {
 
 // undoTo restores the old bytes of every entry from seq on (newest first), removes them from
 // the log and the index, and cuts the current chunk back to pos.
-func (db *DB) undoTo(pos, seq int64) {
+func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
+
+func (db *DB) undoEntries(pos, seq int64, cut bool) {
 	for i := db.seq() - 1; i >= seq; i-- {
 		e := db.entries[i-db.entryBase]
 		old := e.c.m[e.pos+entryHdr : e.pos+entryHdr+int64(e.n)]
 		copy(db.state[e.off:e.off+uint64(e.n)], old)
 		db.markDirty(e.off, uint64(e.n))
-		e.c.m[e.pos] = 0
+		if db.o.Sync && cut {
+			page := uint64(os.Getpagesize())
+			from := e.off / page * page
+			if err := unix.Msync(db.state[from:e.off+uint64(e.n)], unix.MS_SYNC); err != nil {
+				panic(fmt.Sprintf("pagerdb: sync undo: %v", err))
+			}
+		}
+		if cut {
+			e.c.m[e.pos] = 0
+		}
 		for p := db.pieceSeq() - 1; p >= e.piece; p-- {
 			pc := db.pieces[p-db.pieceBase]
 			if pc.prev >= db.pieceBase {
@@ -62,7 +74,9 @@ func (db *DB) undoTo(pos, seq int64) {
 		db.pieces = db.pieces[:e.piece-db.pieceBase]
 		db.entries = db.entries[:i-db.entryBase]
 	}
-	clear(db.cur.m[pos:db.cur.tail])
+	if cut {
+		clear(db.cur.m[pos:db.cur.tail])
+	}
 	db.cur.tail = pos
 	clear(db.segCache)
 	for r, m := range db.maps {
@@ -83,7 +97,7 @@ type scanned struct {
 // scan parses a chunk: checkpoint, complete blocks (count and crc checked), and the entries
 // after the last complete block (the torn tail).
 func scan(m []byte) (cpVer uint64, cpRoot [32]byte, blocks []scanned, tail []int64, ok bool) {
-	if len(m) < cpRec || m[0] != 'C' {
+	if !validCheckpoint(m) {
 		return 0, cpRoot, nil, nil, false
 	}
 	cpVer, cpRoot = le.Uint64(m[8:]), [32]byte(m[16:48])
@@ -96,8 +110,14 @@ loop:
 			if pos+entryHdr > int64(len(m)) {
 				break loop
 			}
+			if le.Uint32(m[pos+8:]) == 0 {
+				break loop
+			}
 			sz := entryHdr + 2*int64(le.Uint32(m[pos+8:]))
 			if pos+sz > int64(len(m)) {
+				break loop
+			}
+			if le.Uint32(m[pos+12:]) != entryChecksum(m[pos:pos+sz], uint64(le.Uint32(m[pos+8:]))) {
 				break loop
 			}
 			cur = append(cur, pos)
@@ -108,7 +128,7 @@ loop:
 			}
 			r := m[pos : pos+blockRec]
 			if int(le.Uint32(r[4:])) != len(cur) || le.Uint64(r[8:]) != ver+1 ||
-				le.Uint32(r[48:]) != crc32.Checksum(m[start:pos], castagnoli) {
+				le.Uint32(r[48:]) != crc32.Update(crc32.Checksum(m[start:pos], castagnoli), castagnoli, r[4:48]) {
 				break loop
 			}
 			ver++
@@ -145,12 +165,26 @@ func openChunk(path string, epoch uint64) (*chunk, error) {
 // rehashed and the root must match its last block record. Older unsealed chunks are loaded
 // into the window and queued for sealing.
 func (db *DB) open() error {
+	_, stateErr := os.Stat(filepath.Join(db.dir, "state"))
+	_, cleanErr := os.Stat(filepath.Join(db.dir, "clean"))
+	db.unclean = stateErr == nil && os.IsNotExist(cleanErr)
+	// Removing the marker is durable before any mapped mutation. Recovery verifies
+	// the complete state even after a clean close, so the marker is diagnostic only.
+	if err := os.Remove(filepath.Join(db.dir, "clean")); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := syncDir(db.dir); err != nil {
+		return err
+	}
 	db.heads = map[uint32]int64{}
 	db.rootIdx = map[[32]byte]uint64{}
 	db.pins = map[uint64]int{}
 	db.sealCond.L = &db.mu
 	db.sealDone = make(chan struct{})
 
+	if err := db.recoverRewind(); err != nil {
+		return err
+	}
 	des, err := os.ReadDir(filepath.Join(db.dir, "log"))
 	if err != nil {
 		return err
@@ -170,7 +204,7 @@ func (db *DB) open() error {
 		if err != nil {
 			return err
 		}
-		if c != nil && c.m[0] == 'C' {
+		if c != nil && validCheckpoint(c.m) {
 			last = c
 			break
 		}
@@ -183,6 +217,9 @@ func (db *DB) open() error {
 		epochs = epochs[:len(epochs)-1]
 	}
 	if last == nil {
+		if _, err := os.Stat(filepath.Join(db.dir, "state")); err == nil {
+			return fmt.Errorf("pagerdb: recovery: state exists but checkpoint log is missing")
+		}
 		if db.o.Store.Latest() != 0 {
 			return fmt.Errorf("pagerdb: %s: sealed epochs but no live log", db.dir)
 		}
@@ -190,6 +227,12 @@ func (db *DB) open() error {
 			return err
 		}
 		db.root = db.hashDirty()
+		if err := db.syncState(); err != nil {
+			return err
+		}
+		if err := syncDir(db.dir); err != nil {
+			return err
+		}
 		c, err := db.newChunk(1, 0, db.root)
 		if err != nil {
 			return err
@@ -209,16 +252,22 @@ func (db *DB) open() error {
 		last.close()
 		return err
 	}
+	// A torn new checkpoint can make a previously sealed chunk current again.
+	// Remove its sealed image before accepting new writes to that epoch.
+	for len(db.sealed) > 0 && db.sealed[len(db.sealed)-1].epoch >= last.epoch {
+		s := db.sealed[len(db.sealed)-1]
+		if err := db.o.Store.Delete(s.epoch); err != nil {
+			last.close()
+			return err
+		}
+		if c, ok := s.ra.(io.Closer); ok {
+			c.Close()
+		}
+		db.sealed = db.sealed[:len(db.sealed)-1]
+	}
 	latest := db.o.Store.Latest()
 	var queue []*chunk
 	for _, e := range epochs[:len(epochs)-1] {
-		if e <= latest {
-			// Sealed before the crash, only the delete was missing.
-			if err := os.Remove(db.chunkPath(e)); err != nil {
-				return err
-			}
-			continue
-		}
 		c, err := openChunk(db.chunkPath(e), e)
 		if err != nil || c == nil {
 			last.close()
@@ -234,7 +283,11 @@ func (db *DB) open() error {
 		c.tail = int64(len(c.m))
 		db.chunks = append(db.chunks, c)
 		db.addBlocks(c, cpVer, cpRoot, bl)
-		queue = append(queue, c)
+		if e <= latest {
+			c.sealed = true
+		} else {
+			queue = append(queue, c)
+		}
 	}
 	db.chunks = append(db.chunks, last)
 	db.cur = last
@@ -269,11 +322,19 @@ func (db *DB) replay(c *chunk) error {
 	need := uint64(0)
 	for _, b := range bl {
 		for _, pos := range b.entries {
-			need = max(need, le.Uint64(c.m[pos+24:])+uint64(le.Uint32(c.m[pos+8:])))
+			off, n := le.Uint64(c.m[pos+24:]), uint64(le.Uint32(c.m[pos+8:]))
+			if off > db.maxLeaves*LeafSize || n > db.maxLeaves*LeafSize-off {
+				return fmt.Errorf("pagerdb: recovery: log state offset out of bounds")
+			}
+			need = max(need, off+n)
 		}
 	}
 	for _, pos := range tail {
-		need = max(need, le.Uint64(c.m[pos+24:])+uint64(le.Uint32(c.m[pos+8:])))
+		off, n := le.Uint64(c.m[pos+24:]), uint64(le.Uint32(c.m[pos+8:]))
+		if off > db.maxLeaves*LeafSize || n > db.maxLeaves*LeafSize-off {
+			return fmt.Errorf("pagerdb: recovery: log state offset out of bounds")
+		}
+		need = max(need, off+n)
 	}
 	if err := db.growState((need + SegSize - 1) / SegSize); err != nil {
 		return err
@@ -308,37 +369,81 @@ func (db *DB) replay(c *chunk) error {
 	if err := db.growState(db.hdr(hNextSeg)); err != nil {
 		return err
 	}
+	// Rebuild all materialized leaves. Never trust persistent tree bytes after a crash.
+	fi, err := db.stateF.Stat()
+	if err != nil {
+		return err
+	}
+	if fi.Size() < 0 || uint64(fi.Size()) > db.maxLeaves*LeafSize {
+		return fmt.Errorf("pagerdb: recovery: invalid state length")
+	}
+	clear(db.tree)
+	db.markDirty(0, uint64(fi.Size()))
 	if root := db.hashDirty(); root != db.root {
 		return fmt.Errorf("pagerdb: recovery: root %x does not match block %d root %x", root, db.version, db.root)
 	}
 	return nil
 }
 
-// Rewind moves the head back to version v, which must be in the current epoch: the old bytes
-// of every newer entry are restored newest first, the leaves rehashed and the log cut at v.
+// Rewind restores version v within RetainVersions, deletes newer sealed history,
+// and starts a new history at v. Close views newer than v before calling it.
 func (db *DB) Rewind(v uint64) error {
+	db.sealWG.Wait()
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if v > db.version {
 		return ErrVersion
 	}
-	// shortcut: only the current epoch can be rewound; crossing into a sealed epoch needs a
-	// delete in EpochStore, add it when the settled version can lag behind an epoch boundary.
-	if v < db.cur.start {
-		return fmt.Errorf("%w: rewind to %d crosses the epoch that starts at %d", ErrWindow, v, db.cur.start)
+	if (db.version > db.o.RetainVersions && v < db.version-db.o.RetainVersions) || v < db.chunks[0].start {
+		return ErrWindow
 	}
 	for pv := range db.pins {
 		if pv > v {
 			return fmt.Errorf("pagerdb: rewind to %d with an open view at %d", v, pv)
 		}
 	}
-	i := slices.IndexFunc(db.blocks, func(b block) bool { return b.c == db.cur && b.ver == v })
+	i := slices.IndexFunc(db.blocks, func(b block) bool { return b.ver == v })
+	if i < 0 {
+		return ErrWindow
+	}
 	b := db.blocks[i]
+	if err := db.writeRewindIntent(v, b.c.epoch, b.end); err != nil {
+		return err
+	}
+	db.cur = b.c
+	db.cur.sealed = false
 	seq := db.seq()
-	for seq > db.entryBase && db.entries[seq-1-db.entryBase].c == db.cur && db.entries[seq-1-db.entryBase].pos >= b.end {
+	for seq > db.entryBase && db.entries[seq-1-db.entryBase].ver > v {
 		seq--
 	}
-	db.undoTo(b.end, seq)
+	db.undoEntries(b.end, seq, false)
+	if err := db.syncState(); err != nil {
+		return err
+	}
+	if err := db.recoverRewind(); err != nil {
+		return err
+	}
+	for len(db.sealed) > 0 && db.sealed[len(db.sealed)-1].epoch >= b.c.epoch {
+		s := db.sealed[len(db.sealed)-1]
+		if err := db.o.Store.Delete(s.epoch); err != nil {
+			return err
+		}
+		if c, ok := s.ra.(io.Closer); ok {
+			c.Close()
+		}
+		db.sealed = db.sealed[:len(db.sealed)-1]
+	}
+	if err := db.cur.f.Truncate(int64(len(db.cur.m))); err != nil {
+		return err
+	}
+	for len(db.chunks) > 0 && db.chunks[len(db.chunks)-1] != db.cur {
+		c := db.chunks[len(db.chunks)-1]
+		c.close()
+		if err := os.Remove(db.chunkPath(c.epoch)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		db.chunks = db.chunks[:len(db.chunks)-1]
+	}
 	db.touches = db.touches[:0]
 	if root := db.hashDirty(); root != b.root {
 		return fmt.Errorf("pagerdb: rewind: root %x does not match version %d root %x", root, v, b.root)
@@ -350,5 +455,9 @@ func (db *DB) Rewind(v uint64) error {
 		db.rootIdx[b.root] = b.ver
 	}
 	db.blockStart, db.blockSeq = b.end, seq
-	return nil
+	return db.syncAll()
+}
+
+func validCheckpoint(m []byte) bool {
+	return len(m) >= cpRec && m[0] == 'C' && le.Uint32(m[48:]) == crc32.Checksum(m[8:48], castagnoli)
 }

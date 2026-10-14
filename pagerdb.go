@@ -15,13 +15,16 @@ import (
 )
 
 const (
-	LeafSize         = 1024    // hash leaf, consensus constant
-	SegSize          = 2 << 20 // allocation segment
+	// LeafSize is the consensus hash leaf size in bytes.
+	LeafSize = 1024 // hash leaf, consensus constant
+	// SegSize is the state allocation segment size in bytes.
+	SegSize = 2 << 20 // allocation segment
+	// DefaultMaxLeaves reserves 16 GiB of state capacity.
 	DefaultMaxLeaves = 1 << 24 // 16 GiB of state
 
 	nClasses  = 11 // small classes 1 KiB .. 1 MiB
 	kindLarge = 12 // region is a chain of 2 MiB segments
-	magic     = "PAGERDB1"
+	magic     = "PAGERDB2"
 
 	// Header field offsets (state file, segment 0).
 	hMagic      = 0
@@ -37,10 +40,15 @@ const (
 var le = binary.LittleEndian
 
 var (
-	ErrFull    = errors.New("pagerdb: state capacity exhausted")
-	ErrRegion  = errors.New("pagerdb: unknown region")
+	// ErrFull reports exhausted state capacity.
+	ErrFull = errors.New("pagerdb: state capacity exhausted")
+	// ErrRegion reports an unknown region handle.
+	ErrRegion = errors.New("pagerdb: unknown region")
+	// ErrPending reports writes that must be committed or undone first.
 	ErrPending = errors.New("pagerdb: uncommitted writes pending")
-	ErrWindow  = errors.New("pagerdb: version outside the window")
+	// ErrWindow reports a version outside rewind retention.
+	ErrWindow = errors.New("pagerdb: version outside the window")
+	// ErrVersion reports an unknown version or root.
 	ErrVersion = errors.New("pagerdb: unknown version or root")
 )
 
@@ -49,22 +57,30 @@ type Region uint32
 
 // Options configures Open. Zero values pick the defaults.
 type Options struct {
-	MaxLeaves     uint64     // tree capacity in 1 KiB leaves, power of two, fixed at creation
-	Sync          bool       // msync the log at every Commit and state and tree at every checkpoint
-	EpochVersions uint64     // close the epoch after this many versions (default 10000)
-	EpochBytes    int64      // or after this many log bytes (default 1 GiB)
-	Store         EpochStore // sealed epochs (default: local files under dir/epochs)
+	// MaxLeaves sets the leaf capacity at creation; it must be a power of two.
+	MaxLeaves uint64 // tree capacity in 1 KiB leaves, power of two, fixed at creation
+	// Sync makes undo records durable before state mutation and syncs every commit.
+	Sync bool // sync undo records before mutation and sync every Commit
+	// RetainVersions sets rewind retention; zero selects 4096 versions.
+	RetainVersions uint64 // versions available for Rewind (default 4096)
+	// EpochVersions sets the epoch version limit; zero selects 10000.
+	EpochVersions uint64 // close the epoch after this many versions (default 10000)
+	// EpochBytes sets the epoch log size limit; zero selects 1 GiB.
+	EpochBytes int64 // or after this many log bytes (default 1 GiB)
+	// Store provides pluggable epoch storage; nil selects local files.
+	Store EpochStore // sealed epochs (default: local files under dir/epochs)
 }
 
 // DB is a page store. One goroutine owns the write API; Views may be used from any goroutine.
 type DB struct {
-	dir string
-	o   Options
-	mu  sync.Mutex
+	dir     string
+	unclean bool
+	o       Options
+	mu      sync.Mutex
 
 	stateF, treeF *os.File
 	state         []byte // whole capacity, MAP_SHARED
-	tree          []byte // heap-layout nodes, 32 B each, node 1 is the root
+	tree          []byte // 127-node subtrees in aligned 4 KiB blocks
 	maxLeaves     uint64
 	depth         int
 	maxSegs       uint64
@@ -96,6 +112,9 @@ func Open(dir string, o Options) (*DB, error) {
 	if o.MaxLeaves < 1<<12 || o.MaxLeaves&(o.MaxLeaves-1) != 0 || o.MaxLeaves > 1<<32 {
 		return nil, fmt.Errorf("pagerdb: MaxLeaves %d must be a power of two in [2^12, 2^32]", o.MaxLeaves)
 	}
+	if o.RetainVersions == 0 {
+		o.RetainVersions = 4096
+	}
 	if o.EpochVersions == 0 {
 		o.EpochVersions = 10000
 	}
@@ -119,9 +138,9 @@ func Open(dir string, o Options) (*DB, error) {
 		db.depth++
 	}
 	db.maxSegs = db.maxLeaves * LeafSize / SegSize
-	db.maxRegions = db.maxLeaves / 16
+	db.maxRegions = db.maxLeaves
 	db.regTab = alignUp(hNext+db.maxSegs*8, LeafSize)
-	db.hdrSegs = alignUp(db.regTab+db.maxRegions*16, SegSize) / SegSize
+	db.hdrSegs = alignUp(db.regTab+((db.maxRegions+regionsPerSegment-1)/regionsPerSegment)*8, SegSize) / SegSize
 	db.dirtyBit = make([]uint64, db.maxLeaves/64)
 	db.empty = make([][32]byte, db.depth+1)
 	db.empty[0] = sha256Sum(make([]byte, LeafSize))
@@ -130,6 +149,10 @@ func Open(dir string, o Options) (*DB, error) {
 	}
 	if err := db.open(); err != nil {
 		db.unmap()
+		db.closeSealed()
+		if db.unclean {
+			return nil, fmt.Errorf("pagerdb: unclean shutdown: %w", err)
+		}
 		return nil, err
 	}
 	return db, nil
@@ -148,9 +171,18 @@ func (db *DB) mapFiles(fresh bool) error {
 	if db.treeF, err = os.OpenFile(filepath.Join(db.dir, "tree"), flags, 0o644); err != nil {
 		return err
 	}
-	treeSize := int64(2 * db.maxLeaves * 32)
+	treeSize := int64(treeStorageSize(db.maxLeaves))
 	if err = db.treeF.Truncate(treeSize); err != nil {
 		return err
+	}
+	if !fresh {
+		fi, e := db.stateF.Stat()
+		if e != nil {
+			return e
+		}
+		if fi.Size() < int64(db.hdrSegs*SegSize) || uint64(fi.Size()) > db.maxLeaves*LeafSize || fi.Size()%SegSize != 0 {
+			return fmt.Errorf("pagerdb: recovery: invalid state file length %d", fi.Size())
+		}
 	}
 	// The state mapping covers the whole capacity; the file grows under it by segments.
 	if db.state, err = unix.Mmap(int(db.stateF.Fd()), 0, int(db.maxLeaves*LeafSize), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED); err != nil {
@@ -178,6 +210,9 @@ func (db *DB) mapFiles(fresh bool) error {
 
 // growState makes the state file at least segs segments long.
 func (db *DB) growState(segs uint64) error {
+	if segs > db.maxSegs {
+		return fmt.Errorf("pagerdb: state segment count %d exceeds capacity", segs)
+	}
 	fi, err := db.stateF.Stat()
 	if err != nil {
 		return err
@@ -223,9 +258,12 @@ func (db *DB) Close() error {
 	}
 	db.undoTo(db.blockStart, db.blockSeq)
 	db.touches = db.touches[:0]
-	var err error
-	if db.o.Sync {
-		err = db.syncAll()
+	err := db.syncAll()
+	if err == nil {
+		err = os.WriteFile(filepath.Join(db.dir, "clean"), []byte("clean\n"), 0o644)
+		if err == nil {
+			err = syncDir(db.dir)
+		}
 	}
 	db.unmap()
 	db.closeSealed()
@@ -235,15 +273,18 @@ func (db *DB) Close() error {
 	return err
 }
 
+// Version returns the current committed version. The write owner calls it.
 func (db *DB) Version() uint64 { return db.version }
-func (db *DB) Root() [32]byte  { return db.root }
+
+// Root returns the current committed root. The write owner calls it.
+func (db *DB) Root() [32]byte { return db.root }
 
 func (db *DB) syncAll() error {
-	if err := unix.Msync(db.state[:db.hdr(hNextSeg)*SegSize], unix.MS_SYNC); err != nil {
+	if err := db.syncState(); err != nil {
 		return err
 	}
-	if err := unix.Msync(db.tree, unix.MS_SYNC); err != nil {
+	if err := unix.Msync(db.cur.m[:db.cur.tail], unix.MS_SYNC); err != nil {
 		return err
 	}
-	return unix.Msync(db.cur.m[:db.cur.tail], unix.MS_SYNC)
+	return db.cur.f.Sync()
 }

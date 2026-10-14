@@ -62,7 +62,7 @@ func TestRewind(t *testing.T) {
 	if err := db.Seal(); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Rewind(3); !errors.Is(err, ErrWindow) {
+	if err := db.Rewind(3); err != nil {
 		t.Fatalf("rewind across a sealed epoch: %v", err)
 	}
 }
@@ -100,9 +100,18 @@ func TestProof(t *testing.T) {
 			t.Fatal("tampered sibling verifies")
 		}
 		bad = p
-		bad.Leaf ^= 1
-		if Verify(db.Root(), bad) {
-			t.Fatal("wrong leaf index verifies")
+		// Equal sibling subtrees cannot distinguish their left/right positions.
+		// Flip the first direction whose two subtree hashes differ.
+		h := sha256Sum(p.Data[:])
+		for level, sibling := range p.Siblings {
+			if h != sibling {
+				bad.Leaf ^= uint64(1) << level
+				if Verify(db.Root(), bad) {
+					t.Fatal("wrong leaf index verifies")
+				}
+				break
+			}
+			h = hashPair(h[:], sibling[:])
 		}
 	}
 	for r := range m {

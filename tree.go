@@ -140,11 +140,14 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	le.PutUint32(r[4:], uint32(db.seq()-db.blockSeq))
 	le.PutUint64(r[8:], db.version+1)
 	copy(r[16:48], root[:])
-	le.PutUint32(r[48:], crc32.Checksum(c.m[db.blockStart:pos], castagnoli))
+	le.PutUint32(r[48:], crc32.Update(crc32.Checksum(c.m[db.blockStart:pos], castagnoli), castagnoli, r[4:48]))
 	r[0] = 'B'
 	if db.o.Sync {
 		from := db.blockStart / int64(os.Getpagesize()) * int64(os.Getpagesize())
 		if err := unix.Msync(c.m[from:c.tail], unix.MS_SYNC); err != nil {
+			return db.root, db.version, err
+		}
+		if err := c.f.Sync(); err != nil {
 			return db.root, db.version, err
 		}
 	}

@@ -11,13 +11,13 @@ import (
 
 // Live log records. The tag byte is written last, so a record with a tag is complete.
 //
-//	entry:      'E' _[3] region u32 | n u32 _[4] | version u64 | state offset u64 | old [n] | new [n]
+//	entry:      'E' _[3] region u32 | n u32 undo crc32c u32 | version u64 | state offset u64 | old [n] | new [n]
 //	block:      'B' _[3] entries u32 | version u64 | root [32] | crc32c u32 _[4]   (after its entries)
-//	checkpoint: 'C' _[7] | version u64 | root [32]                                  (first record of a chunk)
+//	checkpoint: 'C' _[7] | version u64 | root [32] | crc32c u32 _[4]              (first record of a chunk)
 const (
 	entryHdr  = 32
 	blockRec  = 56
-	cpRec     = 48
+	cpRec     = 56
 	chunkInit = 64 << 20
 )
 
@@ -102,9 +102,13 @@ func (db *DB) newChunk(epoch, ver uint64, root [32]byte) (*chunk, error) {
 	}
 	le.PutUint64(c.m[8:], ver)
 	copy(c.m[16:48], root[:])
+	le.PutUint32(c.m[48:], crc32.Checksum(c.m[8:48], castagnoli))
 	c.m[0] = 'C'
 	if db.o.Sync {
 		if err = unix.Msync(c.m[:cpRec], unix.MS_SYNC); err == nil {
+			err = c.f.Sync()
+		}
+		if err == nil {
 			err = syncDir(filepath.Dir(c.f.Name()))
 		}
 	}
@@ -153,7 +157,18 @@ func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	if b != nil {
 		copy(e[entryHdr+n:], b)
 	}
+	le.PutUint32(e[12:], entryChecksum(e, n))
 	e[0] = 'E'
+	// The undo image must reach disk before any shared state byte can change.
+	if db.o.Sync {
+		from := pos / int64(os.Getpagesize()) * int64(os.Getpagesize())
+		if err := unix.Msync(db.cur.m[from:db.cur.tail], unix.MS_SYNC); err != nil {
+			panic(fmt.Sprintf("pagerdb: durable undo: %v", err))
+		}
+		if err := db.cur.f.Sync(); err != nil {
+			panic(fmt.Sprintf("pagerdb: durable undo file: %v", err))
+		}
+	}
 	if b != nil {
 		copy(db.state[fo:fo+n], e[entryHdr+n:])
 	}
@@ -204,9 +219,9 @@ func (db *DB) rotate() error {
 		if err := unix.Msync(old.m[:old.tail], unix.MS_SYNC); err != nil {
 			return err
 		}
-		if err := db.syncState(); err != nil {
-			return err
-		}
+	}
+	if err := db.syncState(); err != nil {
+		return err
 	}
 	c, err := db.newChunk(old.epoch+1, db.version, db.root)
 	if err != nil {
@@ -224,5 +239,19 @@ func (db *DB) syncState() error {
 	if err := unix.Msync(db.state[:db.hdr(hNextSeg)*SegSize], unix.MS_SYNC); err != nil {
 		return err
 	}
-	return unix.Msync(db.tree, unix.MS_SYNC)
+	if err := unix.Msync(db.tree, unix.MS_SYNC); err != nil {
+		return err
+	}
+	if err := db.stateF.Sync(); err != nil {
+		return err
+	}
+	return db.treeF.Sync()
+}
+
+// entryChecksum protects the immutable undo image. New bytes are protected by
+// the block checksum because Touch fills them only at Commit.
+func entryChecksum(e []byte, n uint64) uint32 {
+	crc := crc32.Checksum(e[4:12], castagnoli)
+	crc = crc32.Update(crc, castagnoli, e[16:entryHdr])
+	return crc32.Update(crc, castagnoli, e[entryHdr:entryHdr+n])
 }

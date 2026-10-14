@@ -12,10 +12,11 @@ type viewState struct {
 
 // View is a read-only image of the state at one committed version.
 type View struct {
-	db     *DB
-	v      uint64
-	window bool // served from head plus the live log, else from sealed epochs
-	closed bool
+	db       *DB
+	v        uint64
+	window   bool // served from head plus the live log, else from sealed epochs
+	closed   bool
+	mappings []*viewMapping
 }
 
 // View opens the state at version v.
@@ -29,10 +30,14 @@ func (db *DB) view(v uint64) (*View, error) {
 	if v > db.version {
 		return nil, ErrVersion
 	}
-	if v >= db.chunks[0].start {
+	if v < db.chunks[0].start && (len(db.sealed) == 0 || v < db.sealed[0].start || v > db.sealed[len(db.sealed)-1].end) {
+		return nil, ErrVersion
+	}
+	if v >= db.chunks[0].start && (len(db.sealed) == 0 || v >= db.sealed[len(db.sealed)-1].end) {
 		db.pins[v]++
 		return &View{db: db, v: v, window: true}, nil
 	}
+	db.pins[v]++
 	return &View{db: db, v: v}, nil
 }
 
@@ -65,11 +70,11 @@ func (vw *View) Close() {
 	db := vw.db
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	if vw.closed || !vw.window {
-		vw.closed = true
+	if vw.closed {
 		return
 	}
 	vw.closed = true
+	vw.closeMaps()
 	if db.pins[vw.v]--; db.pins[vw.v] == 0 {
 		delete(db.pins, vw.v)
 	}
@@ -125,15 +130,17 @@ func (vw *View) Copy(r Region) ([]byte, error) {
 }
 
 func (vw *View) readFile(fo uint64, b []byte) error {
+	vw.db.mu.Lock()
 	if vw.closed {
+		vw.db.mu.Unlock()
 		return fmt.Errorf("pagerdb: view closed")
 	}
 	if vw.window {
-		vw.db.mu.Lock()
 		defer vw.db.mu.Unlock()
 		vw.db.readWindow(vw.v, fo, b)
 		return nil
 	}
+	vw.db.mu.Unlock()
 	var lb [LeafSize]byte
 	for pos := uint64(0); pos < uint64(len(b)); {
 		o := fo + pos
@@ -151,7 +158,10 @@ func (vw *View) readFile(fo uint64, b []byte) error {
 // Caller holds db.mu.
 func (db *DB) readWindow(v, fo uint64, b []byte) {
 	n := uint64(len(b))
-	copy(b, db.state[fo:fo+n])
+	if n == 0 {
+		return
+	}
+	covered := make([]bool, len(b))
 	var seqs []int64
 	for l := fo / LeafSize; l <= (fo+n-1)/LeafSize; l++ {
 		p, ok := db.heads[uint32(l)]
@@ -174,7 +184,21 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 		lo, hi := max(e.off, fo), min(e.off+uint64(e.n), fo+n)
 		if lo < hi {
 			copy(b[lo-fo:hi-fo], e.c.m[e.pos+entryHdr+int64(lo-e.off):])
+			for i := lo - fo; i < hi-fo; i++ {
+				covered[i] = true
+			}
 		}
+	}
+	for i := 0; i < len(b); {
+		if covered[i] {
+			i++
+			continue
+		}
+		start := i
+		for i < len(b) && !covered[i] {
+			i++
+		}
+		copy(b[start:i], db.state[fo+uint64(start):fo+uint64(i)])
 	}
 }
 
@@ -182,6 +206,9 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 func (db *DB) dropChunks() {
 	for len(db.chunks) > 1 && db.chunks[0].sealed {
 		c, next := db.chunks[0], db.chunks[1].start
+		if db.version <= db.o.RetainVersions || next > db.version-db.o.RetainVersions {
+			return
+		}
 		for pv := range db.pins {
 			if pv < next {
 				return
