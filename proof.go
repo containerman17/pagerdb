@@ -7,8 +7,11 @@ import (
 
 // Proof is a leaf of the head state and the sibling hashes from the leaf up to the root.
 type Proof struct {
-	Leaf     uint64 // leaf index = state file offset / 1 KiB
-	Data     [LeafSize]byte
+	// Leaf is the state file offset divided by LeafSize.
+	Leaf uint64
+	// Data contains the proved leaf bytes.
+	Data [LeafSize]byte
+	// Siblings contains sibling hashes in leaf-to-root order.
 	Siblings [][32]byte
 }
 

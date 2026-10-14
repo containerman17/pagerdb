@@ -1,0 +1,25 @@
+name: Test
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: Fuzz parsers
+        shell: bash
+        run: |
+          for parser in LogRecords BlockRecords EpochFrame EpochIndex ExportImage; do
+            GOMAXPROCS=2 go test -run '^$' -fuzz "^Fuzz${parser}$" -fuzztime=30s .
+          done
