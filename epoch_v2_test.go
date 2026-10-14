@@ -6,6 +6,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -606,4 +607,73 @@ func TestXOROverlappingTouchesAndWrites(t *testing.T) {
 	}
 	defer db.Close()
 	check()
+}
+
+func TestXORRetainedViewBeforePrunedSealedPrefix(t *testing.T) {
+	dir := t.TempDir()
+	options := Options{MaxLeaves: 1 << 16, EpochVersions: 2, RetainVersions: 100}
+	db, e := Open(dir, options)
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, e := db.Alloc(LeafSize)
+	if e != nil {
+		t.Fatal(e)
+	}
+	var root [32]byte
+	for v := 1; v <= 8; v++ {
+		db.Write(r, 0, []byte{byte(v)})
+		got, _, e := db.Commit()
+		if e != nil {
+			t.Fatal(e)
+		}
+		if v == 1 {
+			root = got
+		}
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Close(); e != nil {
+		t.Fatal(e)
+	}
+	store, e := NewLocalStore(filepath.Join(dir, "epochs"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	for epoch := uint64(1); epoch <= 2; epoch++ {
+		if e = store.Delete(epoch); e != nil {
+			t.Fatal(e)
+		}
+	}
+	db, e = Open(dir, options)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	if len(db.sealed) == 0 || db.sealed[0].start != 4 || db.chunks[0].start > 1 {
+		t.Fatal("fixture did not retain history before sealed prefix")
+	}
+	for _, byRoot := range []bool{false, true} {
+		var v *View
+		if byRoot {
+			v, e = db.ViewRoot(root)
+		} else {
+			v, e = db.View(1)
+		}
+		if e != nil {
+			t.Fatal(e)
+		}
+		if !v.window {
+			t.Fatal("retained version before sealed prefix did not select live window")
+		}
+		var got [1]byte
+		if e = v.Read(r, 0, 1, got[:]); e != nil {
+			t.Fatal(e)
+		}
+		v.Close()
+		if got[0] != 1 {
+			t.Fatalf("retained prefix view returned %d", got[0])
+		}
+	}
 }
