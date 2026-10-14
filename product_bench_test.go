@@ -98,7 +98,11 @@ func benchmarkSustained(b *testing.B, seal, untimedSeal bool) {
 	wallTime := time.Since(start)
 	elapsed := wallTime - excludedTime
 	b.StopTimer()
+	db.mu.Lock()
+	backpressureEvents := db.sealWaits
+	db.mu.Unlock()
 	slices.Sort(times)
+	b.ReportMetric(float64(backpressureEvents), "backpressure-events")
 	b.ReportMetric(float64(b.N)/elapsed.Seconds(), "blocks/s")
 	if untimedSeal {
 		b.ReportMetric(float64(b.N)/wallTime.Seconds(), "wall-blocks/s")
