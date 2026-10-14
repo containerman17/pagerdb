@@ -341,3 +341,127 @@ func TestEpochIndexPageBoundary(t *testing.T) {
 		}
 	}
 }
+
+func TestSealBaseUsesPreviousChangeAndGenesis(t *testing.T) {
+	db, e := Open(t.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 100})
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer db.Close()
+	genesis := append([]byte(nil), db.state[:LeafSize]...)
+	r, e := db.Alloc(4096)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(r, 0, []byte{17})
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	var got [LeafSize]byte
+	if e = db.sealBaseLeaf(0, 0, 0, got[:]); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Equal(got[:], genesis) {
+		t.Fatal("genesis header base differs")
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	leaf := db.loc(r).off / LeafSize
+	for i := 0; i < 3; i++ {
+		if _, _, e = db.Commit(); e != nil {
+			t.Fatal(e)
+		}
+		if e = db.Seal(); e != nil {
+			t.Fatal(e)
+		}
+	}
+	previous := db.sealed[len(db.sealed)-1]
+	row, ok, e := previous.lookup(leaf)
+	if e != nil || !ok {
+		t.Fatalf("previous lookup: %t %v", ok, e)
+	}
+	last := le.Uint64(row[16:])
+	if last != 1 {
+		t.Fatalf("last change epoch %d", last)
+	}
+	// Later head writes must not affect the checkpoint base read from epoch one.
+	db.Write(r, 0, []byte{99})
+	if e = db.sealBaseLeaf(last, leaf, previous.end, got[:]); e != nil {
+		t.Fatal(e)
+	}
+	if got[0] != 17 {
+		t.Fatalf("sealed checkpoint base %d", got[0])
+	}
+	// The second region is first allocated after the previous sealed checkpoint.
+	fresh, e := db.Alloc(4096)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(fresh, 0, []byte{55})
+	freshLeaf := db.loc(fresh).off / LeafSize
+	_, ok, e = previous.lookup(freshLeaf)
+	if e != nil || ok {
+		t.Fatalf("fresh leaf already indexed: %t %v", ok, e)
+	}
+	if e = db.sealBaseLeaf(0, freshLeaf, previous.end, got[:]); e != nil {
+		t.Fatal(e)
+	}
+	if !bytes.Equal(got[:], make([]byte, LeafSize)) {
+		t.Fatal("first-change base is not zero")
+	}
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.sealBaseLeaf(1, freshLeaf, previous.end, got[:]); e == nil {
+		t.Fatal("missing base leaf accepted")
+	}
+	if e = db.sealBaseLeaf(^uint64(0), leaf, previous.end, got[:]); e == nil {
+		t.Fatal("missing base epoch accepted")
+	}
+	if e = db.sealBaseLeaf(1, leaf, 0, got[:]); e == nil {
+		t.Fatal("future base epoch accepted")
+	}
+}
+
+func BenchmarkSealBaseBacklog(b *testing.B) {
+	db, e := Open(b.TempDir(), Options{MaxLeaves: 1 << 16, EpochVersions: 1 << 30, EpochBytes: 1 << 40})
+	if e != nil {
+		b.Fatal(e)
+	}
+	defer db.Close()
+	r, e := db.Alloc(4096)
+	if e != nil {
+		b.Fatal(e)
+	}
+	db.Write(r, 0, []byte{17})
+	if _, _, e = db.Commit(); e != nil {
+		b.Fatal(e)
+	}
+	if e = db.Seal(); e != nil {
+		b.Fatal(e)
+	}
+	leaf := db.loc(r).off / LeafSize
+	for i := 0; i < 10000; i++ {
+		db.Write(r, 0, []byte{byte(i)})
+	}
+	b.Run("Window", func(b *testing.B) {
+		var out [LeafSize]byte
+		for i := 0; i < b.N; i++ {
+			db.mu.Lock()
+			db.readWindow(1, leaf*LeafSize, out[:])
+			db.mu.Unlock()
+		}
+	})
+	b.Run("Sealed", func(b *testing.B) {
+		var out [LeafSize]byte
+		for i := 0; i < b.N; i++ {
+			if e = db.sealBaseLeaf(1, leaf, 1, out[:]); e != nil {
+				b.Fatal(e)
+			}
+		}
+	})
+}

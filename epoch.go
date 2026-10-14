@@ -339,18 +339,23 @@ func (db *DB) seal(c *chunk) error {
 		if err = copyOld(leaf); err != nil {
 			return err
 		}
+		lastChanged := uint64(0)
 		if previous != nil && oldAt < previous.nLeaves {
 			r, e := previous.indexRecord(oldAt)
 			if e != nil {
 				return e
 			}
 			if uint64(le.Uint32(r[:])) == leaf {
+				lastChanged = le.Uint64(r[16:])
 				oldAt++
 			}
 		}
-		db.mu.Lock()
-		db.readWindow(c.start, leaf*LeafSize, base)
-		db.mu.Unlock()
+		if previous != nil && previous.end != c.start {
+			return fmt.Errorf("pagerdb: seal checkpoint does not follow previous epoch")
+		}
+		if err = db.sealBaseLeaf(lastChanged, leaf, c.start, base); err != nil {
+			return err
+		}
 		off, _ := out.Seek(0, io.SeekCurrent)
 		frames := uint32(0)
 		payload := append(make([]byte, 0, LeafSize+frameCap), base...)
@@ -445,6 +450,36 @@ func (db *DB) seal(c *chunk) error {
 	db.sealed = append(db.sealed, s)
 	c.sealed = true
 	db.dropChunks()
+	return nil
+}
+
+// sealBaseLeaf uses the previous cumulative index's last-change epoch. The
+// leaf at that epoch's end remains unchanged through the sealing checkpoint.
+// A leaf absent from all sealed indexes still needs the live-log/genesis base.
+func (db *DB) sealBaseLeaf(lastChanged, leaf, version uint64, out []byte) error {
+	db.mu.Lock()
+	if lastChanged == 0 {
+		db.readWindow(version, leaf*LeafSize, out)
+		db.mu.Unlock()
+		return nil
+	}
+	i := sort.Search(len(db.sealed), func(i int) bool { return db.sealed[i].epoch >= lastChanged })
+	if i == len(db.sealed) || db.sealed[i].epoch != lastChanged {
+		db.mu.Unlock()
+		return fmt.Errorf("pagerdb: sealed base epoch %d missing", lastChanged)
+	}
+	previous := db.sealed[i]
+	db.mu.Unlock()
+	if previous.end > version {
+		return fmt.Errorf("pagerdb: sealed base follows checkpoint")
+	}
+	found, err := previous.leaf(leaf, version, out)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("pagerdb: leaf %d missing from sealed base epoch %d", leaf, lastChanged)
+	}
 	return nil
 }
 

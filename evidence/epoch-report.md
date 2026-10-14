@@ -43,3 +43,11 @@ Each fuzzer has committed valid and truncated seed files under testdata/fuzz. Ad
 `go test -race -run 'Test(DiskSort|Epoch)|TestViews' -count=1`: PASS 27.439s. After the newest-root and cache-boundary tests, `go test -race -run 'Test(Epoch|SealedRootReturnsNewest)' -count=1`: PASS 1.936s.
 
 Linux validation is owned by the coordinator. No Linux claim is made here.
+
+## Seal base optimization
+
+Sealing now uses each existing cumulative row's last-change epoch to read the checkpoint base directly from its immutable frame. It no longer walks queued later writes for every previously sealed leaf. Never-sealed leaves and genesis metadata still use the live-log reconstruction. The previous epoch's end must match the next checkpoint; missing epochs or indexed leaves return errors.
+
+`TestSealBaseUsesPreviousChangeAndGenesis` verifies a leaf unchanged across three epochs, later head writes, first allocation of a new leaf, genesis metadata, and inconsistent base references. Focused race suite `go test -race -run 'Test(SealBase|EpochCumulative|Views|SealedRoot)' -count=1`: PASS12.673s.
+
+`go test -run '^$' -bench '^BenchmarkSealBaseBacklog$' -benchtime=200ms -count=3`, with 10,000 pending writes after the checkpoint: former window reconstruction 160.720-203.250us/base; immutable sealed reconstruction 6.236-8.986us/base. This isolates base reconstruction and does not claim a sustained throughput result.
