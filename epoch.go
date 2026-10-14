@@ -138,6 +138,7 @@ type sealState struct {
 	sealed      []*sealedEpoch
 	sealQ       []*chunk
 	sealPending int
+	sealWorkers []sealBuffers
 	sealCond    sync.Cond
 	sealWG      sync.WaitGroup
 	sealStop    bool
@@ -155,6 +156,14 @@ func (db *DB) enqueueSeal(c *chunk) {
 
 func (db *DB) sealer() {
 	defer close(db.sealDone)
+	defer func() {
+		for i := range db.sealWorkers {
+			if db.sealWorkers[i].encoder != nil {
+				db.sealWorkers[i].encoder.Close()
+			}
+		}
+		db.sealWorkers = nil
+	}()
 	for {
 		db.mu.Lock()
 		for len(db.sealQ) == 0 && !db.sealStop {
@@ -251,6 +260,7 @@ func (db *DB) seal(c *chunk) error {
 		return err
 	}
 	end, nRoots := c.start, uint64(1)
+	minLeaf, maxLeaf := ^uint64(0), uint64(0)
 	var ref [40]byte
 	for pos := int64(cpRec); pos < c.tail; {
 		r := c.m[pos:]
@@ -262,6 +272,7 @@ func (db *DB) seal(c *chunk) error {
 			}
 			for p := uint64(0); p < n; {
 				at := fo + p
+				minLeaf, maxLeaf = min(minLeaf, at/LeafSize), max(maxLeaf, at/LeafSize)
 				k := min(n-p, LeafSize-at%LeafSize)
 				oldAt := uint64(pos) + entryHdr + p
 				for i, v := range []uint64{at / LeafSize, uint64(pos) + p, ver, oldAt} {
@@ -297,298 +308,11 @@ func (db *DB) seal(c *chunk) error {
 	if err = rw.Flush(); err != nil {
 		return err
 	}
-	sorted, err := diskSort(dir, pieces, 40, func(a, b []byte) bool {
-		if le.Uint64(a) != le.Uint64(b) {
-			return le.Uint64(a) < le.Uint64(b)
-		}
-		return le.Uint64(a[8:]) > le.Uint64(b[8:])
-	})
-	if err != nil {
-		return err
-	}
-	defer sorted.Close()
-	sr := bufio.NewReaderSize(sorted, 64<<10)
-	sortedRoots, err := diskSort(dir, roots, rootRec, rootLess)
-	if err != nil {
-		return err
-	}
-	defer sortedRoots.Close()
-	out, err := create("epoch-")
+	out, err := db.parallelSeal(dir, c, end, nRoots, minLeaf, maxLeaf, pieces, roots)
 	if err != nil {
 		return err
 	}
 	defer out.Close()
-	if _, err = out.Write(make([]byte, epochHdr)); err != nil {
-		return err
-	}
-	index, err := create("index-")
-	if err != nil {
-		return err
-	}
-	defer index.Close()
-	iw := bufio.NewWriterSize(index, 64<<10)
-	dense, err := create("dense-")
-	if err != nil {
-		return err
-	}
-	defer dense.Close()
-	dw := bufio.NewWriterSize(dense, 64<<10)
-	dirs, err := create("directories-")
-	if err != nil {
-		return err
-	}
-	defer dirs.Close()
-	fw := bufio.NewWriterSize(dirs, 64<<10)
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		return err
-	}
-	defer enc.Close()
-	db.mu.Lock()
-	var previous *sealedEpoch
-	if len(db.sealed) > 0 {
-		previous = db.sealed[len(db.sealed)-1]
-	}
-	db.mu.Unlock()
-	if previous != nil && previous.end != c.start {
-		return fmt.Errorf("pagerdb: epoch checkpoint discontinuity")
-	}
-	oldAt, nLeaves, dirBytes, denseBytes := uint64(0), uint64(0), uint64(0), uint64(0)
-	var copiedIndex [idxRec]byte
-	copyOld := func(until uint64) error {
-		if previous == nil {
-			return nil
-		}
-		for oldAt < previous.nLeaves {
-			var e error
-			copiedIndex, e = previous.indexRecord(oldAt)
-			if e != nil {
-				return e
-			}
-			if uint64(le.Uint32(copiedIndex[:])) >= until {
-				break
-			}
-			clear(copiedIndex[4:16])
-			clear(copiedIndex[24:])
-			if _, e = iw.Write(copiedIndex[:]); e != nil {
-				return e
-			}
-			oldAt++
-			nLeaves++
-		}
-		return nil
-	}
-	payload := make([]byte, 0, frameCap+LeafSize)
-	compressed := make([]byte, 0, frameCap+LeafSize)
-	var rec [40]byte
-	var inherited, indexRow [idxRec]byte
-	var frameDirectory [frameDirRec]byte
-	var denseRow [denseRec]byte
-	_, readErr := io.ReadFull(sr, rec[:])
-	for readErr == nil {
-		leaf := le.Uint64(rec[:])
-		if err = copyOld(leaf); err != nil {
-			return err
-		}
-		prior := uint64(0)
-		if previous != nil && oldAt < previous.nLeaves {
-			r, e := previous.indexRecord(oldAt)
-			if e != nil {
-				return e
-			}
-			if uint64(le.Uint32(r[:])) == leaf {
-				prior = le.Uint64(r[16:])
-				inherited = r
-				oldAt++
-			}
-		}
-		leafDir, leafDense := dirBytes, denseBytes
-		frames, count, firstIndex := uint32(0), uint64(0), uint64(0)
-		runCount, newest, oldest := uint32(0), uint32(0), uint32(0)
-		var boundary, delta [LeafSize]byte
-		// Touch captures its final new bytes at Commit and can overlap later
-		// writes. Reconstruct the epoch-end leaf once, then derive each write's
-		// actual undo delta from the next newer state instead of stale new data.
-		db.mu.Lock()
-		db.readWindowRange(end, leaf, 0, boundary[:])
-		db.mu.Unlock()
-		payload = payload[:0]
-		flush := func(full bool) error {
-			if runCount == 0 {
-				return nil
-			}
-			flags := byte(0)
-			if full {
-				payload = append(payload, boundary[:]...)
-				flags |= 2
-			}
-			rawLen := len(payload)
-			compressed = enc.EncodeAll(payload, compressed[:0])
-			body := payload
-			if len(compressed)*10 <= len(payload)*9 {
-				body = compressed
-				flags |= 1
-			}
-			off, e := out.Seek(0, io.SeekCurrent)
-			if e != nil {
-				return e
-			}
-			var h [frameHdr]byte
-			h[0] = flags
-			le.PutUint32(h[4:], uint32(len(body)))
-			le.PutUint32(h[8:], uint32(rawLen))
-			le.PutUint32(h[12:], runCount)
-			le.PutUint64(h[16:], firstIndex)
-			le.PutUint32(h[24:], oldest)
-			le.PutUint32(h[28:], newest)
-			if _, e = out.Write(h[:]); e != nil {
-				return e
-			}
-			if _, e = out.Write(body); e != nil {
-				return e
-			}
-			le.PutUint64(frameDirectory[:], uint64(off))
-			le.PutUint64(frameDirectory[8:], firstIndex)
-			le.PutUint32(frameDirectory[16:], runCount)
-			le.PutUint32(frameDirectory[20:], uint32(flags))
-			if _, e = fw.Write(frameDirectory[:]); e != nil {
-				return e
-			}
-			dirBytes += frameDirRec
-			frames++
-			firstIndex = count
-			runCount = 0
-			payload = payload[:0]
-			return nil
-		}
-		for readErr == nil && le.Uint64(rec[:]) == leaf {
-			ver := uint32(le.Uint64(rec[16:]) - c.start)
-			oldAt := le.Uint64(rec[24:])
-			off, n := uint64(le.Uint16(rec[32:])), uint64(le.Uint16(rec[34:]))
-			for i := uint64(0); i < n; i++ {
-				delta[i] = boundary[off+i] ^ c.m[oldAt+i]
-			}
-			lo, hi := uint64(0), n
-			for lo < hi && delta[lo] == 0 {
-				lo++
-			}
-			for hi > lo && delta[hi-1] == 0 {
-				hi--
-			}
-			if lo < hi {
-				if len(payload)+denseRec+int(hi-lo) > frameCap {
-					if err = flush(true); err != nil {
-						return err
-					}
-				}
-				le.PutUint32(denseRow[:], ver)
-				le.PutUint16(denseRow[4:], uint16(off+lo))
-				le.PutUint16(denseRow[6:], uint16(hi-lo))
-				if _, err = dw.Write(denseRow[:]); err != nil {
-					return err
-				}
-				denseBytes += denseRec
-				if runCount == 0 {
-					newest = ver
-				}
-				oldest = ver
-				payload = append(payload, denseRow[:]...)
-				payload = append(payload, delta[lo:hi]...)
-				count++
-				runCount++
-			}
-			copy(boundary[off:off+n], c.m[oldAt:oldAt+n])
-			_, readErr = io.ReadFull(sr, rec[:])
-		}
-		if err = flush(len(payload) >= frameCap); err != nil {
-			return err
-		}
-		if count == 0 {
-			if prior != 0 {
-				clear(inherited[4:16])
-				clear(inherited[24:])
-				if _, err = iw.Write(inherited[:]); err != nil {
-					return err
-				}
-				nLeaves++
-			}
-			continue
-		}
-		le.PutUint32(indexRow[:], uint32(leaf))
-		le.PutUint32(indexRow[4:], frames)
-		le.PutUint64(indexRow[8:], leafDir)
-		le.PutUint64(indexRow[16:], c.epoch)
-		le.PutUint64(indexRow[24:], prior)
-		le.PutUint64(indexRow[32:], leafDense)
-		le.PutUint64(indexRow[40:], count)
-		if _, err = iw.Write(indexRow[:]); err != nil {
-			return err
-		}
-		nLeaves++
-	}
-	if readErr != io.EOF {
-		return readErr
-	}
-	if err = copyOld(^uint64(0)); err != nil {
-		return err
-	}
-	for _, w := range []*bufio.Writer{iw, dw, fw} {
-		if err = w.Flush(); err != nil {
-			return err
-		}
-	}
-	dirBase, err := out.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	dirs.Seek(0, 0)
-	if _, err = io.Copy(out, dirs); err != nil {
-		return err
-	}
-	denseBase, err := out.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	dense.Seek(0, 0)
-	if _, err = io.Copy(out, dense); err != nil {
-		return err
-	}
-	indexOff, err := out.Seek(0, io.SeekCurrent)
-	if err != nil {
-		return err
-	}
-	index.Seek(0, 0)
-	ir := bufio.NewReaderSize(index, 64<<10)
-	ow := bufio.NewWriterSize(out, 64<<10)
-	var r [idxRec]byte
-	for i := uint64(0); i < nLeaves; i++ {
-		if _, err = io.ReadFull(ir, r[:]); err != nil {
-			return err
-		}
-		if le.Uint32(r[4:]) != 0 {
-			le.PutUint64(r[8:], le.Uint64(r[8:])+uint64(dirBase))
-			le.PutUint64(r[32:], le.Uint64(r[32:])+uint64(denseBase))
-		}
-		if _, err = ow.Write(r[:]); err != nil {
-			return err
-		}
-	}
-	if err = ow.Flush(); err != nil {
-		return err
-	}
-	rootsOff, _ := out.Seek(0, io.SeekCurrent)
-	if _, err = io.Copy(out, sortedRoots); err != nil {
-		return err
-	}
-	var h [epochHdr]byte
-	copy(h[:], epochMagic)
-	for i, v := range []uint64{c.epoch, c.start, end, nLeaves, uint64(indexOff), nRoots, uint64(rootsOff)} {
-		le.PutUint64(h[8+i*8:], v)
-	}
-	if _, err = out.WriteAt(h[:], 0); err != nil {
-		return err
-	}
-	out.Seek(0, 0)
 	if err = db.o.Store.Put(c.epoch, out); err != nil {
 		return err
 	}
