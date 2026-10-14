@@ -1,12 +1,19 @@
 package pagerdb
 
-// Temporary stand-ins for recovery, views and epochs, replaced in the next steps.
+// Temporary stand-ins for views and epochs, replaced in the next steps.
 
-import "io"
+import (
+	"io"
+	"sync"
+)
 
 type viewState struct{ pins map[uint64]int }
 
-type sealState struct{ sealErr error }
+type sealState struct {
+	sealCond sync.Cond
+	sealDone chan struct{}
+	sealErr  error
+}
 
 type EpochStore interface {
 	Put(epoch uint64, r io.Reader) error
@@ -14,31 +21,14 @@ type EpochStore interface {
 	Latest() uint64
 }
 
-type Mark struct{}
+type noStore struct{}
 
-func NewLocalStore(string) (EpochStore, error) { return nil, nil }
-
-func (db *DB) mark() Mark            { return Mark{} }
-func (db *DB) undo(Mark)             {}
-func (db *DB) undoTo(pos, seq int64) {}
-func (db *DB) stopSealer()           {}
-func (db *DB) closeSealed()          {}
-func (db *DB) enqueueSeal(*chunk)    {}
-
-// open always creates a fresh store until recovery exists.
-func (db *DB) open() error {
-	db.heads = map[uint32]int64{}
-	db.rootIdx = map[[32]byte]uint64{}
-	if err := db.mapFiles(true); err != nil {
-		return err
-	}
-	db.root = db.hashDirty()
-	c, err := db.newChunk(1, 0, db.root)
-	if err != nil {
-		return err
-	}
-	db.cur, db.chunks = c, []*chunk{c}
-	db.blocks = []block{{ver: 0, root: db.root, c: c, end: cpRec}}
-	db.blockStart = cpRec
-	return nil
-}
+func (noStore) Put(uint64, io.Reader) error             { return nil }
+func (noStore) Open(uint64) (io.ReaderAt, int64, error) { return nil, 0, io.EOF }
+func (noStore) Latest() uint64                          { return 0 }
+func NewLocalStore(string) (EpochStore, error)          { return noStore{}, nil }
+func (db *DB) stopSealer()                              {}
+func (db *DB) closeSealed()                             {}
+func (db *DB) enqueueSeal(*chunk)                       {}
+func (db *DB) sealer()                                  {}
+func (db *DB) loadSealed() error                        { return nil }
