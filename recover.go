@@ -1,6 +1,7 @@
 package pagerdb
 
 import (
+	"bytes"
 	"fmt"
 	"hash/crc32"
 	"io"
@@ -346,7 +347,6 @@ func (db *DB) replay(c *chunk) error {
 			src = src[n:]
 		}
 		copy(db.state[fo:fo+n], src[:n])
-		db.markDirty(fo, n)
 	}
 	for _, b := range bl {
 		for _, pos := range b.entries {
@@ -362,25 +362,33 @@ func (db *DB) replay(c *chunk) error {
 		end = bl[len(bl)-1].end
 		db.version, db.root = bl[len(bl)-1].ver, bl[len(bl)-1].root
 	}
-	clear(c.m[end:])
 	c.tail = end
 	db.addBlocks(c, cpVer, cpRoot, bl)
 	db.blockStart, db.blockSeq = end, db.seq()
 	if err := db.growState(db.hdr(hNextSeg)); err != nil {
 		return err
 	}
-	// Rebuild all materialized leaves. Never trust persistent tree bytes after a crash.
-	fi, err := db.stateF.Stat()
+	root, err := db.rebuildTree()
 	if err != nil {
 		return err
 	}
-	if fi.Size() < 0 || uint64(fi.Size()) > db.maxLeaves*LeafSize {
-		return fmt.Errorf("pagerdb: recovery: invalid state length")
-	}
-	clear(db.tree)
-	db.markDirty(0, uint64(fi.Size()))
-	if root := db.hashDirty(); root != db.root {
+	if root != db.root {
 		return fmt.Errorf("pagerdb: recovery: root %x does not match block %d root %x", root, db.version, db.root)
+	}
+	// Persist restored bytes before removing their undo records. Recovery itself
+	// may lose power, so the undo records must remain usable until this point.
+	if err := db.syncState(); err != nil {
+		return err
+	}
+	clear(c.m[end:])
+	if db.o.Sync {
+		from := end / int64(os.Getpagesize()) * int64(os.Getpagesize())
+		if err := unix.Msync(c.m[from:], unix.MS_SYNC); err != nil {
+			return err
+		}
+		if err := c.f.Sync(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -460,4 +468,47 @@ func (db *DB) Rewind(v uint64) error {
 
 func validCheckpoint(m []byte) bool {
 	return len(m) >= cpRec && m[0] == 'C' && le.Uint32(m[48:]) == crc32.Checksum(m[8:48], castagnoli)
+}
+
+// rebuildTree runs only during Open. It replaces the disposable tree file with
+// sparse zero storage and hashes nonzero leaves in bounded batches.
+func (db *DB) rebuildTree() ([32]byte, error) {
+	var zeroRoot [32]byte
+	fi, err := db.stateF.Stat()
+	if err != nil {
+		return zeroRoot, err
+	}
+	if fi.Size() < 0 || uint64(fi.Size()) > db.maxLeaves*LeafSize || fi.Size()%LeafSize != 0 {
+		return zeroRoot, fmt.Errorf("pagerdb: recovery: invalid state length")
+	}
+	if err = unix.Munmap(db.tree); err != nil {
+		return zeroRoot, err
+	}
+	db.tree = nil
+	if err = db.treeF.Truncate(0); err != nil {
+		return zeroRoot, err
+	}
+	size := int64(treeStorageSize(db.maxLeaves))
+	if err = db.treeF.Truncate(size); err != nil {
+		return zeroRoot, err
+	}
+	db.tree, err = unix.Mmap(int(db.treeF.Fd()), 0, int(size), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
+	if err != nil {
+		return zeroRoot, err
+	}
+	clear(db.dirtyBit)
+	const batch = 65536
+	db.dirty = make([]uint32, 0, batch)
+	var zero [LeafSize]byte
+	leaves := uint64(fi.Size()) / LeafSize
+	for start := uint64(0); start < leaves; start += batch {
+		for leaf := start; leaf < min(start+batch, leaves); leaf++ {
+			off := leaf * LeafSize
+			if !bytes.Equal(db.state[off:off+LeafSize], zero[:]) {
+				db.markDirty(off, LeafSize)
+			}
+		}
+		db.hashDirty()
+	}
+	return [32]byte(db.node(1, db.depth)), nil
 }

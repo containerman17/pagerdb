@@ -496,3 +496,97 @@ func TestRecoveryRejectsStateBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryRebuildBatches(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 18}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.Alloc(70 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for off := 0; off < 70<<20; off += LeafSize {
+		db.Write(r, off, []byte{byte(off/LeafSize%255 + 1)})
+	}
+	root, _, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if db.Root() != root {
+		t.Fatal("batched rebuild root differs")
+	}
+	if cap(db.dirty) > 65536 {
+		t.Fatalf("rebuild retained %d dirty slots", cap(db.dirty))
+	}
+	var got [1]byte
+	for _, off := range []int{0, 65535 * LeafSize, 65536 * LeafSize, (70 << 20) - LeafSize} {
+		db.Read(r, off, 1, got[:])
+		if got[0] != byte(off/LeafSize%255+1) {
+			t.Fatalf("offset %d: %d", off, got[0])
+		}
+	}
+}
+
+func TestRecoveryFailurePreservesUndo(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.Alloc(2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Write(r, 0, []byte{7})
+	db.Write(r, 1024, []byte{8})
+	if _, _, err = db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	pos, path := db.cur.tail, db.cur.f.Name()
+	db.Write(r, 0, []byte{9})
+	off := db.loc(r).off + 1024
+	if err = db.syncState(); err != nil {
+		t.Fatal(err)
+	}
+	crash(db)
+	f, err := os.OpenFile(filepath.Join(dir, "state"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = f.WriteAt([]byte{99}, int64(off)); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	db, err = Open(dir, o)
+	if err == nil {
+		db.Close()
+		t.Fatal("accepted corrupt state")
+	}
+	f, err = os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var tag [1]byte
+	if _, err = f.ReadAt(tag[:], pos); err != nil {
+		t.Fatal(err)
+	}
+	if tag[0] != 'E' {
+		t.Fatal("failed recovery destroyed its undo record")
+	}
+}
