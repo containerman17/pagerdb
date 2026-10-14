@@ -78,12 +78,27 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 	}
 	// Only leaves changed after the requested version need an eager copy.
 	changed := make(map[uint64]struct{})
+	segments := make(map[uint64]bool, len(l.segs))
+	for _, segment := range l.segs {
+		segments[segment] = true
+	}
+	addChanged := func(leaf uint64) {
+		off := leaf * LeafSize
+		if l.segs == nil {
+			if off < l.off || off >= l.off+l.size {
+				return
+			}
+		} else if !segments[off/SegSize] {
+			return
+		}
+		changed[leaf] = struct{}{}
+	}
 	db := vw.db
 	db.mu.Lock()
 	for _, e := range db.entries {
 		if e.ver > vw.v {
 			for leaf := e.off / LeafSize; leaf <= (e.off+uint64(e.n)-1)/LeafSize; leaf++ {
-				changed[leaf] = struct{}{}
+				addChanged(leaf)
 			}
 		}
 	}
@@ -91,7 +106,7 @@ func (vw *View) privateMap(l loc) (*viewMapping, error) {
 	db.mu.Unlock()
 	for _, s := range sealed {
 		if s.end > vw.v {
-			if err := s.eachChangedLeaf(func(leaf uint64) error { changed[leaf] = struct{}{}; return nil }); err != nil {
+			if err := s.eachChangedLeaf(func(leaf uint64) error { addChanged(leaf); return nil }); err != nil {
 				unix.Munmap(m.memory)
 				return nil, err
 			}

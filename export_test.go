@@ -27,11 +27,20 @@ func TestExportImport(t *testing.T) {
 		}
 		roots[v] = root
 	}
-	if err = db.Seal(); err != nil {
-		t.Fatal(err)
+	db.sealWG.Wait()
+	if db.sealErr != nil {
+		t.Fatal(db.sealErr)
 	}
 	for _, v := range []uint64{8, 7, 2} {
 		t.Run(fmt.Sprint(v), func(t *testing.T) {
+			probe, err := db.View(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if probe.window != (v >= 7) {
+				t.Fatal("unexpected history path")
+			}
+			probe.Close()
 			var image bytes.Buffer
 			if err := db.Export(v, &image); err != nil {
 				t.Fatal(err)
@@ -41,6 +50,9 @@ func TestExportImport(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer copyDB.Close()
+			if _, err := copyDB.View(v - 1); err == nil {
+				t.Fatal("import exposed missing history")
+			}
 			if copyDB.Root() != roots[v] || copyDB.Version() != v {
 				t.Fatal("root or version differs")
 			}
@@ -136,3 +148,45 @@ func Example() {
 	fmt.Println(string(b), Verify(root, proof))
 	// Output: hello true
 }
+
+func TestImageParserRejectsMalformed(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var buf bytes.Buffer
+	if err = db.Export(0, &buf); err != nil {
+		t.Fatal(err)
+	}
+	good := buf.Bytes()
+	cases := map[string][]byte{
+		"header truncated":   good[:20],
+		"leaf truncated":     good[:imageHeader+50],
+		"trailing bytes":     append(bytes.Clone(good), 0),
+		"missing terminator": good[:len(good)-8],
+	}
+	wrongOrder := bytes.Clone(good)
+	le.PutUint64(wrongOrder[imageHeader:], 1)
+	cases["missing header leaf"] = wrongOrder
+	badCapacity := bytes.Clone(good)
+	le.PutUint64(badCapacity[8:], 123)
+	cases["capacity"] = badCapacity
+	badUsed := bytes.Clone(good)
+	le.PutUint64(badUsed[24:], 1)
+	cases["state length"] = badUsed
+	for name, b := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, _, _, err := readImage(bytes.NewReader(b), discardAt{}, db.Root()); err == nil {
+				t.Fatal("accepted malformed image")
+			}
+		})
+	}
+	if err = db.Export(0, shortWriter{}); err == nil {
+		t.Fatal("accepted short writer")
+	}
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) { return 0, nil }

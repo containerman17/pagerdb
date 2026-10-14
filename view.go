@@ -44,19 +44,17 @@ func (db *DB) view(v uint64) (*View, error) {
 // ViewRoot opens the state whose root is root (newest version with that root).
 func (db *DB) ViewRoot(root [32]byte) (*View, error) {
 	db.mu.Lock()
+	defer db.mu.Unlock()
 	if v, ok := db.rootIdx[root]; ok {
-		defer db.mu.Unlock()
 		return db.view(v)
 	}
-	sealed := db.sealed
-	db.mu.Unlock()
-	for i := len(sealed) - 1; i >= 0; i-- {
-		v, ok, err := sealed[i].findRoot(root)
+	for i := len(db.sealed) - 1; i >= 0; i-- {
+		v, ok, err := db.sealed[i].findRoot(root)
 		if err != nil {
 			return nil, err
 		}
 		if ok {
-			return db.View(v)
+			return db.view(v)
 		}
 	}
 	return nil, ErrVersion

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math/bits"
 	"os"
@@ -174,6 +175,7 @@ func Import(dir string, r io.Reader, expectedRoot [32]byte) (*DB, error) {
 	cp[0] = 'C'
 	le.PutUint64(cp[8:], version)
 	copy(cp[16:], root[:])
+	le.PutUint32(cp[48:], crc32.Checksum(cp[8:48], castagnoli))
 	if err = os.WriteFile(filepath.Join(stage, "log", "000000000001"), cp[:], 0644); err != nil {
 		return nil, err
 	}
@@ -202,7 +204,7 @@ func readImage(r io.Reader, w io.WriterAt, expected [32]byte) (uint64, uint64, [
 	}
 	cap, ver, used := le.Uint64(h[8:]), le.Uint64(h[16:]), le.Uint64(h[24:])
 	root = [32]byte(h[32:])
-	if string(h[:8]) != imageMagic || cap < 1<<12 || cap > 1<<32 || cap&(cap-1) != 0 || used == 0 || used > cap || used%(SegSize/LeafSize) != 0 {
+	if string(h[:8]) != imageMagic || cap < 1<<13 || cap > 1<<32 || cap&(cap-1) != 0 || used == 0 || used > cap || used%(SegSize/LeafSize) != 0 {
 		return fail(fmt.Errorf("pagerdb: invalid image header"))
 	}
 	if root != expected {
@@ -226,7 +228,7 @@ func readImage(r io.Reader, w io.WriterAt, expected [32]byte) (uint64, uint64, [
 		if _, err := io.ReadFull(r, leaf[:]); err != nil {
 			return fail(err)
 		}
-		if !seen && (string(leaf[:8]) != magic || le.Uint64(leaf[8:]) != cap || le.Uint64(leaf[hNextSeg:])*SegSize/LeafSize != used) {
+		if !seen && (string(leaf[:8]) != magic || le.Uint64(leaf[8:]) != cap || le.Uint64(leaf[hNextSeg:]) != used/(SegSize/LeafSize)) {
 			return fail(fmt.Errorf("pagerdb: image state header mismatch"))
 		}
 		seen = true
@@ -248,7 +250,7 @@ func readImage(r io.Reader, w io.WriterAt, expected [32]byte) (uint64, uint64, [
 		return fail(fmt.Errorf("pagerdb: image root mismatch"))
 	}
 	var extra [1]byte
-	if n, err := r.Read(extra[:]); n != 0 || err != io.EOF {
+	if n, err := io.ReadFull(r, extra[:]); n != 0 || err != io.EOF {
 		return fail(fmt.Errorf("pagerdb: trailing image bytes or missing EOF"))
 	}
 	if f, ok := w.(interface{ Truncate(int64) error }); ok {

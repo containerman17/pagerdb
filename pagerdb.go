@@ -109,8 +109,8 @@ func Open(dir string, o Options) (*DB, error) {
 	if o.MaxLeaves == 0 {
 		o.MaxLeaves = DefaultMaxLeaves
 	}
-	if o.MaxLeaves < 1<<12 || o.MaxLeaves&(o.MaxLeaves-1) != 0 || o.MaxLeaves > 1<<32 {
-		return nil, fmt.Errorf("pagerdb: MaxLeaves %d must be a power of two in [2^12, 2^32]", o.MaxLeaves)
+	if o.MaxLeaves < 1<<13 || o.MaxLeaves&(o.MaxLeaves-1) != 0 || o.MaxLeaves > 1<<32 {
+		return nil, fmt.Errorf("pagerdb: MaxLeaves %d must be a power of two in [2^13, 2^32]", o.MaxLeaves)
 	}
 	if o.RetainVersions == 0 {
 		o.RetainVersions = 4096

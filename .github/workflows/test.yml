@@ -20,6 +20,6 @@ jobs:
       - name: Fuzz parsers
         shell: bash
         run: |
-          for parser in LogRecords BlockRecords EpochFrame EpochIndex ExportImage; do
+          for parser in LogRecords BlockRecords EpochFrame EpochIndex ExportImage RewindIntent; do
             GOMAXPROCS=2 go test -run '^$' -fuzz "^Fuzz${parser}$" -fuzztime=30s .
           done

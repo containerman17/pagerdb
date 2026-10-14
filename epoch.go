@@ -18,9 +18,13 @@ import (
 // EpochStore holds sealed epoch files. Put and Delete must be durable when
 // they return. Open must return an immutable snapshot until its reader closes.
 type EpochStore interface {
+	// Put publishes an epoch durably before returning.
 	Put(epoch uint64, r io.Reader) error
+	// Open returns immutable epoch bytes and their size.
 	Open(epoch uint64) (io.ReaderAt, int64, error)
+	// Latest returns the highest stored epoch, or zero for an empty store.
 	Latest() uint64
+	// Delete removes an epoch durably. Rewind deletes from newest to oldest.
 	Delete(epoch uint64) error
 }
 

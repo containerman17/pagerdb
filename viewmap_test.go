@@ -106,3 +106,35 @@ func TestParallelViewMaps(t *testing.T) {
 		t.Fatal("private writes reached DB")
 	}
 }
+
+func TestPrivateMapFallback(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 14})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, _ := db.Alloc(1024)
+	db.Write(r, 0, []byte("old"))
+	_, v, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vw, _ := db.View(v)
+	l, _ := vw.loc(r)
+	m, err := vw.privateMap(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vw.mappings = append(vw.mappings, m)
+	defer vw.Close()
+	db.Write(r, 0, []byte("new"))
+	if string(m.data[:3]) != "old" {
+		t.Fatal("fallback snapshot changed")
+	}
+	m.data[0] = 'x'
+	var b [3]byte
+	db.Read(r, 0, 3, b[:])
+	if string(b[:]) != "new" {
+		t.Fatal("private write escaped")
+	}
+}

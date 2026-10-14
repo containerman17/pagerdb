@@ -59,18 +59,27 @@ func (vw *View) faultMap(r Region, l loc) (*viewMapping, error) {
 			if err == unix.EINTR {
 				continue
 			}
-			if err != nil || n == 0 {
+			if err != nil {
+				panic(fmt.Sprintf("pagerdb: userfaultfd poll: %v", err))
+			}
+			if n == 0 {
 				continue
+			}
+			if poll[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
+				panic("pagerdb: userfaultfd poll descriptor failed")
 			}
 			n, err = unix.Read(fd, msg[:])
 			if err == unix.EAGAIN || err == unix.EINTR {
 				continue
 			}
 			if err != nil || n != 32 || msg[0] != 0x12 {
-				continue
+				panic(fmt.Sprintf("pagerdb: userfaultfd invalid event: bytes=%d event=%d error=%v", n, msg[0], err))
 			}
 			fault := le.Uint64(msg[16:]) / uint64(len(page)) * uint64(len(page))
 			off := fault - addr
+			if fault < addr || off >= l.size {
+				panic("pagerdb: userfaultfd address outside mapping")
+			}
 			clear(page)
 			count := min(uint64(len(page)), l.size-off)
 			// Failure must never fabricate snapshot bytes. Fail the process rather than

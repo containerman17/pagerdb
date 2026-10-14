@@ -241,3 +241,21 @@ func BenchmarkTreeColdPath(b *testing.B) {
 		})
 	}
 }
+
+func TestMinimumCapacityAllocates(t *testing.T) {
+	if db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 12}); err == nil {
+		db.Close()
+		t.Fatal("accepted capacity without space for a region")
+	}
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 13})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Alloc(1); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
