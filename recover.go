@@ -58,9 +58,9 @@ func (db *DB) undoEntries(pos, seq int64, cut bool) {
 		for len(db.pieces) > 0 && db.pieceEntry(db.pieces[len(db.pieces)-1]) >= i {
 			p, pc := db.pieceSeq()-1, db.pieces[len(db.pieces)-1]
 			if prev, ok := db.prevPiece(p, pc); ok {
-				db.heads[pc.leaf] = prev
+				db.heads.set(pc.leaf, prev)
 			} else {
-				delete(db.heads, pc.leaf)
+				db.heads.del(pc.leaf)
 			}
 			db.pieces = db.pieces[:len(db.pieces)-1]
 		}
@@ -171,7 +171,7 @@ func (db *DB) open() error {
 	if err := syncDir(db.dir); err != nil {
 		return err
 	}
-	db.heads = map[uint32]int64{}
+	db.heads = make(headTab, (db.maxLeaves+1<<16-1)>>16)
 	db.rootIdx = map[[32]byte]uint64{}
 	db.pins = map[uint64]int{}
 	db.sealCond.L = &db.mu

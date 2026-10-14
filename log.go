@@ -56,6 +56,31 @@ type piece struct {
 	leaf  uint32
 }
 
+// headTab maps a leaf to its newest piece seq plus one (0 means none) in
+// 64 Ki-leaf pages allocated on first use. A dense table avoids map hashing
+// and growth on every write. Entries below pieceBase are stale and mean none.
+type headTab [][]int64
+
+func (h headTab) get(l uint32) (int64, bool) {
+	if pg := h[l>>16]; pg != nil && pg[l&0xffff] != 0 {
+		return pg[l&0xffff] - 1, true
+	}
+	return 0, false
+}
+
+func (h headTab) set(l uint32, p int64) {
+	if h[l>>16] == nil {
+		h[l>>16] = make([]int64, 1<<16)
+	}
+	h[l>>16][l&0xffff] = p + 1
+}
+
+func (h headTab) del(l uint32) {
+	if pg := h[l>>16]; pg != nil {
+		pg[l&0xffff] = 0
+	}
+}
+
 // rec returns e's mapped log record and the state range it covers.
 func (db *DB) rec(e *entry) (m []byte, off, n uint64) {
 	m = db.chunks[(e.epoch()-uint32(db.chunks[0].epoch))&(1<<24-1)].m[e.loc>>24:]
@@ -91,7 +116,7 @@ type logState struct {
 	entryBase int64
 	pieces    []piece
 	pieceBase int64
-	heads     map[uint32]int64 // leaf -> newest piece seq
+	heads     headTab // leaf -> newest piece seq
 	blocks    []block          // window versions, checkpoints included
 	rootIdx   map[[32]byte]uint64
 	// durableEpoch is the newest chunk whose checkpoint the synced state file
@@ -205,10 +230,10 @@ func (db *DB) index(c *chunk, pos int64, ver, fo, n uint64) {
 	for l := fo / LeafSize; l <= (fo+n-1)/LeafSize; l++ {
 		p := db.pieceSeq()
 		back := uint32(0)
-		if prev, ok := db.heads[uint32(l)]; ok && p-prev <= math.MaxUint32 {
+		if prev, ok := db.heads.get(uint32(l)); ok && p-prev <= math.MaxUint32 {
 			back = uint32(p - prev)
 		}
-		db.heads[uint32(l)] = p
+		db.heads.set(uint32(l), p)
 		db.pieces = append(db.pieces, piece{entry: uint32(seq), back: back, leaf: uint32(l)})
 	}
 }

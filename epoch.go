@@ -382,7 +382,7 @@ func (db *DB) seal(c *chunk) error {
 func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
 	off := leaf*LeafSize + offset
 	end := off + uint64(len(out))
-	p, ok := db.heads[uint32(leaf)]
+	p, ok := db.heads.get(uint32(leaf))
 	if !ok || p < db.pieceBase || db.entries[db.pieceEntry(db.pieces[p-db.pieceBase])-db.entryBase].ver <= version {
 		copy(out, db.state[off:end])
 		return

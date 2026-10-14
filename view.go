@@ -188,8 +188,8 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 	}
 }
 
-// cutIndex removes the oldest k entries and their pieces. Stale heads stay
-// until dropChunks; readers treat heads below pieceBase as absent.
+// cutIndex removes the oldest k entries and their pieces. Readers treat heads
+// below pieceBase as absent, so heads need no cleanup.
 func (db *DB) cutIndex(k int) {
 	if k == 0 {
 		return
@@ -244,11 +244,6 @@ func (db *DB) dropChunks() (dropped []*chunk) {
 			k++
 		}
 		db.cutIndex(k)
-		for l, p := range db.heads {
-			if p < db.pieceBase {
-				delete(db.heads, l)
-			}
-		}
 		db.windowStart = max(db.windowStart, next)
 		db.blocks = slices.DeleteFunc(db.blocks, func(b block) bool {
 			if b.c == c && db.rootIdx[b.root] == b.ver && b.ver != next {
