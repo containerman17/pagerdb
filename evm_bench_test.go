@@ -129,7 +129,7 @@ func evmVMStat(b *testing.B) map[string]float64 {
 	return counters
 }
 
-// BenchmarkEVM uses default database options, including Sync=false and the
+// BenchmarkEVM uses default database options, including the
 // 1 GiB / 10000-version epoch thresholds. PAGERDB_EVM_RETAIN overrides
 // RetainVersions (default 4096). One iteration is one block.
 // Run -benchtime=700x -cpu=8 -timeout=60m to cross three automatic seals.
