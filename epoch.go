@@ -135,20 +135,22 @@ type sealedEpoch struct {
 }
 
 type sealState struct {
-	sealed   []*sealedEpoch
-	sealQ    []*chunk
-	sealCond sync.Cond
-	sealWG   sync.WaitGroup
-	sealStop bool
-	sealDone chan struct{}
-	sealErr  error
+	sealed      []*sealedEpoch
+	sealQ       []*chunk
+	sealPending int
+	sealCond    sync.Cond
+	sealWG      sync.WaitGroup
+	sealStop    bool
+	sealDone    chan struct{}
+	sealErr     error
 }
 
 // enqueueSeal hands a closed chunk to the sealer. Caller holds db.mu.
 func (db *DB) enqueueSeal(c *chunk) {
 	db.sealWG.Add(1)
+	db.sealPending++
 	db.sealQ = append(db.sealQ, c)
-	db.sealCond.Signal()
+	db.sealCond.Broadcast()
 }
 
 func (db *DB) sealer() {
@@ -166,13 +168,17 @@ func (db *DB) sealer() {
 		db.sealQ = db.sealQ[1:]
 		failed := db.sealErr != nil
 		db.mu.Unlock()
+		var err error
 		if !failed {
-			if err := db.seal(c); err != nil {
-				db.mu.Lock()
-				db.sealErr = fmt.Errorf("pagerdb: seal epoch %d: %w", c.epoch, err)
-				db.mu.Unlock()
-			}
+			err = db.seal(c)
 		}
+		db.mu.Lock()
+		if err != nil {
+			db.sealErr = fmt.Errorf("pagerdb: seal epoch %d: %w", c.epoch, err)
+		}
+		db.sealPending--
+		db.sealCond.Broadcast()
+		db.mu.Unlock()
 		db.sealWG.Done()
 	}
 }
@@ -184,7 +190,7 @@ func (db *DB) stopSealer() {
 		return
 	}
 	db.sealStop = true
-	db.sealCond.Signal()
+	db.sealCond.Broadcast()
 	db.mu.Unlock()
 	<-db.sealDone
 }

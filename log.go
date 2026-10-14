@@ -211,6 +211,17 @@ func (db *DB) Touch(r Region, off, n int) {
 
 // rotate closes the current epoch and opens the next with a checkpoint mark.
 func (db *DB) rotate() error {
+	// Bound future history that the sealer must undo to reconstruct its end state.
+	// Recovery can enqueue an existing backlog; new rotations wait for it to drain.
+	for db.sealPending >= 2 && db.sealErr == nil && !db.sealStop {
+		db.sealCond.Wait()
+	}
+	if db.sealErr != nil {
+		return db.sealErr
+	}
+	if db.sealStop {
+		return fmt.Errorf("pagerdb: sealer stopped")
+	}
 	old := db.cur
 	if err := old.f.Truncate(old.tail); err != nil {
 		return err
