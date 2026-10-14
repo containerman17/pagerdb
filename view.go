@@ -186,7 +186,7 @@ func (db *DB) readWindow(v, fo uint64, b []byte) {
 
 // dropChunks removes sealed chunks from the window once no view needs them. Caller holds db.mu.
 func (db *DB) dropChunks() (dropped []*chunk) {
-	for len(db.chunks) > 1 && db.chunks[0].sealed {
+	for len(db.chunks) > 1 && db.chunks[0].sealed && db.chunks[1].epoch <= db.durableEpoch {
 		c, next := db.chunks[0], db.chunks[1].start
 		if db.version <= db.o.RetainVersions || next > db.version-db.o.RetainVersions {
 			return dropped

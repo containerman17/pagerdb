@@ -207,6 +207,29 @@ func (db *DB) sealer() {
 	}
 }
 
+// syncDurable writes the state back and syncs it off the commit path. The sync
+// starts after the current checkpoint, so every older chunk becomes removable.
+// The state mapping is fixed while the sealer runs, so db.mu guards only cur.
+func (db *DB) syncDurable() error {
+	db.mu.Lock()
+	target := db.cur.epoch
+	db.mu.Unlock()
+	fi, err := db.stateF.Stat()
+	if err != nil {
+		return err
+	}
+	if err = unix.Msync(db.state[:fi.Size()], unix.MS_SYNC); err != nil {
+		return err
+	}
+	if err = db.stateF.Sync(); err != nil {
+		return err
+	}
+	db.mu.Lock()
+	db.durableEpoch = max(db.durableEpoch, target)
+	db.mu.Unlock()
+	return nil
+}
+
 func (db *DB) stopSealer() {
 	db.mu.Lock()
 	if db.sealDone == nil || db.sealStop {
@@ -327,6 +350,15 @@ func (db *DB) seal(c *chunk) error {
 	}
 	sealed, err := db.openSealed(c.epoch)
 	if err != nil {
+		return err
+	}
+	// The log is trimmed only after the state it would recover is durable.
+	if err = db.syncDurable(); err != nil {
+		sealed.close()
+		return err
+	}
+	if err = c.f.Truncate(c.tail); err != nil {
+		sealed.close()
 		return err
 	}
 	db.mu.Lock()

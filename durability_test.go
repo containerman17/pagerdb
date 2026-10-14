@@ -78,58 +78,55 @@ func TestRetainedRewindAcrossEpochs(t *testing.T) {
 
 // A state page changed without a surviving log record must never pass Open.
 func TestRecoveryLostWholeLogTail(t *testing.T) {
-	for _, syncMode := range []bool{false, true} {
-		t.Run(map[bool]string{false: "async", true: "sync"}[syncMode], func(t *testing.T) {
-			dir := t.TempDir()
-			o := Options{MaxLeaves: 1 << 14, Sync: syncMode}
-			db, e := Open(dir, o)
-			if e != nil {
-				t.Fatal(e)
-			}
-			r, e := db.Alloc(1024)
-			if e != nil {
-				t.Fatal(e)
-			}
-			db.Write(r, 0, []byte{1})
-			if _, _, e = db.Commit(); e != nil {
-				t.Fatal(e)
-			}
-			if e = db.Seal(); e != nil {
-				t.Fatal(e)
-			}
-			off := db.loc(r).off
-			end := db.cur.tail
-			path := db.cur.f.Name()
-			if e = db.Close(); e != nil {
-				t.Fatal(e)
-			}
-			f, e := os.OpenFile(filepath.Join(dir, "state"), os.O_RDWR, 0)
-			if e != nil {
-				t.Fatal(e)
-			}
-			if _, e = f.WriteAt([]byte{99}, int64(off)); e != nil {
-				t.Fatal(e)
-			}
-			f.Close()
-			if e = os.Truncate(path, end); e != nil {
-				t.Fatal(e)
-			}
-			os.Remove(filepath.Join(dir, "clean"))
-			db, e = Open(dir, o)
-			if e == nil {
-				db.Close()
-				t.Fatal("accepted state bytes without log record")
-			}
-			if !strings.Contains(e.Error(), "root") {
-				t.Fatal(e)
-			}
-		})
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14}
+	db, e := Open(dir, o)
+	if e != nil {
+		t.Fatal(e)
+	}
+	r, e := db.Alloc(1024)
+	if e != nil {
+		t.Fatal(e)
+	}
+	db.Write(r, 0, []byte{1})
+	if _, _, e = db.Commit(); e != nil {
+		t.Fatal(e)
+	}
+	if e = db.Seal(); e != nil {
+		t.Fatal(e)
+	}
+	// A byte no kept log entry covers: recovery redoes byte 0 from the log.
+	off := db.loc(r).off + 1
+	end := db.cur.tail
+	path := db.cur.f.Name()
+	if e = db.Close(); e != nil {
+		t.Fatal(e)
+	}
+	f, e := os.OpenFile(filepath.Join(dir, "state"), os.O_RDWR, 0)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if _, e = f.WriteAt([]byte{99}, int64(off)); e != nil {
+		t.Fatal(e)
+	}
+	f.Close()
+	if e = os.Truncate(path, end); e != nil {
+		t.Fatal(e)
+	}
+	os.Remove(filepath.Join(dir, "clean"))
+	db, e = Open(dir, o)
+	if e == nil {
+		db.Close()
+		t.Fatal("accepted state bytes without log record")
+	}
+	if !strings.Contains(e.Error(), "root") {
+		t.Fatal(e)
 	}
 }
 
-func TestRecoverySyncPendingTouch(t *testing.T) {
+func TestRecoveryPendingTouch(t *testing.T) {
 	dir := t.TempDir()
-	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	o := Options{MaxLeaves: 1 << 14}
 	db, err := Open(dir, o)
 	if err != nil {
 		t.Fatal(err)
@@ -248,7 +245,7 @@ func TestRecoveryInterruptedRewind(t *testing.T) {
 	for _, stage := range []string{"intent", "partial state", "removed log"} {
 		t.Run(stage, func(t *testing.T) {
 			dir := t.TempDir()
-			o := Options{MaxLeaves: 1 << 14, EpochVersions: 2, Sync: true}
+			o := Options{MaxLeaves: 1 << 14, EpochVersions: 2}
 			db, err := Open(dir, o)
 			if err != nil {
 				t.Fatal(err)
@@ -329,7 +326,7 @@ func TestRecoveryIncompleteRotation(t *testing.T) {
 	for _, n := range []int64{0, 16, cpRec} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			dir := t.TempDir()
-			o := Options{MaxLeaves: 1 << 14, Sync: true}
+			o := Options{MaxLeaves: 1 << 14}
 			db, err := Open(dir, o)
 			if err != nil {
 				t.Fatal(err)
@@ -366,7 +363,7 @@ func TestRecoveryTornRecordChecksums(t *testing.T) {
 	for _, kind := range []string{"entry", "block", "checkpoint"} {
 		t.Run(kind, func(t *testing.T) {
 			dir := t.TempDir()
-			o := Options{MaxLeaves: 1 << 14, Sync: true}
+			o := Options{MaxLeaves: 1 << 14}
 			db, err := Open(dir, o)
 			if err != nil {
 				t.Fatal(err)
@@ -542,7 +539,7 @@ func TestRecoveryRebuildBatches(t *testing.T) {
 
 func TestRecoveryFailurePreservesUndo(t *testing.T) {
 	dir := t.TempDir()
-	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	o := Options{MaxLeaves: 1 << 14}
 	db, err := Open(dir, o)
 	if err != nil {
 		t.Fatal(err)
@@ -561,7 +558,7 @@ func TestRecoveryFailurePreservesUndo(t *testing.T) {
 	}
 	pos, path := db.cur.tail, db.cur.f.Name()
 	db.Write(r, 0, []byte{9})
-	off := db.loc(r).off + 1024
+	off := db.loc(r).off + 1025 // redo restores byte 1024, not this one
 	if err = db.syncState(); err != nil {
 		t.Fatal(err)
 	}
@@ -593,194 +590,69 @@ func TestRecoveryFailurePreservesUndo(t *testing.T) {
 	}
 }
 
-// TestSyncPowerLoss simulates power loss in Sync mode. Every state page may
-// have reached disk. The log on disk is either exactly what its barriers wrote
-// (stale bytes elsewhere stay) or everything written so far. Recovery must
-// return exactly the last committed version in both cases.
-func TestSyncPowerLoss(t *testing.T) {
+// TestRecoveryRedoesKeptChunks covers a crash after several rotations whose
+// state was never synced: the state file on disk is as old as the oldest kept
+// checkpoint, and recovery must redo every kept chunk to reach the last block.
+func TestRecoveryRedoesKeptChunks(t *testing.T) {
 	dir := t.TempDir()
-	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	o := Options{MaxLeaves: 1 << 14, EpochVersions: 3}
 	db, err := Open(dir, o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	// A small region makes staged writes overlap often.
-	const size = 4 << 10
-	r, err := db.Alloc(size)
+	r, err := db.Alloc(8 << 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	root, ver, err := db.Commit()
+	if _, _, err = db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(filepath.Join(dir, "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	cur := make([]byte, size)
-	committed := bytes.Clone(cur)
-	disk := bytes.Clone(db.cur.m)
-	// barrier runs op and copies the log range its barrier writes into disk.
-	barrier := func(op func()) {
-		page := int64(os.Getpagesize())
-		from, high := db.blockStart/page*page, db.logHigh
-		op()
-		end := max(db.cur.tail, high)
-		copy(disk[from:end], db.cur.m[from:end])
+	if db, err = Open(dir, o); err != nil {
+		t.Fatal(err)
 	}
-	rng := rand.New(rand.NewPCG(11, 12))
-	write := func() {
-		n := 1 + rng.IntN(300)
-		off := rng.IntN(size - n)
-		b := make([]byte, n)
-		for i := range b {
-			b[i] = byte(rng.Uint32())
+	rng := rand.New(rand.NewPCG(3, 4))
+	want := make([]byte, 8<<10)
+	db.Read(r, 0, len(want), want)
+	var root [32]byte
+	var ver uint64
+	for range 20 {
+		for range 5 {
+			b := make([]byte, 1+rng.IntN(2000))
+			off := rng.IntN(len(want) - len(b))
+			for i := range b {
+				b[i] = byte(rng.Uint32())
+			}
+			db.Write(r, off, b)
+			copy(want[off:], b)
 		}
-		db.Write(r, off, b)
-		copy(cur[off:], b)
-	}
-	touch := func() {
-		n := 1 + rng.IntN(300)
-		off := rng.IntN(size - n)
-		barrier(func() { db.Touch(r, off, n) })
-		mp, err := db.Map(r)
-		if err != nil {
+		if root, ver, err = db.Commit(); err != nil {
 			t.Fatal(err)
 		}
-		for j := off; j < off+n; j++ {
-			mp[j] = byte(rng.Uint32())
-		}
-		copy(cur[off:], mp[off:off+n])
 	}
-	recoverFrom := func(logImage []byte) {
-		cdir := t.TempDir()
-		for _, d := range []string{"log", "epochs"} {
-			if err := os.MkdirAll(filepath.Join(cdir, d), 0o755); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for _, name := range []string{"state", "tree"} {
-			b, err := os.ReadFile(filepath.Join(dir, name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err = os.WriteFile(filepath.Join(cdir, name), b, 0o644); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := os.WriteFile(filepath.Join(cdir, "log", filepath.Base(db.cur.f.Name())), logImage, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		got, err := Open(cdir, o)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer got.Close()
-		if got.Version() != ver || got.Root() != root {
-			t.Fatalf("recovered version %d, want %d", got.Version(), ver)
-		}
-		b := make([]byte, size)
-		got.Read(r, 0, size, b)
-		if !bytes.Equal(b, committed) {
-			t.Fatal("recovered bytes differ from the last commit")
-		}
+	if len(db.chunks) < 5 {
+		t.Fatalf("only %d chunks kept", len(db.chunks))
 	}
-	for i := 0; i < 250; i++ {
-		switch op := rng.IntN(20); {
-		case op < 9:
-			write()
-		case op < 13:
-			m := db.Mark()
-			saved := bytes.Clone(cur)
-			for range 1 + rng.IntN(4) {
-				if rng.IntN(4) == 0 {
-					touch()
-				} else {
-					write()
-				}
-			}
-			// The kernel may write back any dirty log page before the undo.
-			if rng.IntN(2) == 0 {
-				copy(disk, db.cur.m)
-			}
-			db.Undo(m)
-			cur = saved
-		case op < 15:
-			touch()
-		case op < 17:
-			barrier(func() {
-				if root, ver, err = db.Commit(); err != nil {
-					t.Fatal(err)
-				}
-			})
-			committed = bytes.Clone(cur)
-		default:
-			recoverFrom(disk)
-			recoverFrom(db.cur.m)
-		}
-		b := make([]byte, size)
-		db.Read(r, 0, size, b)
-		if !bytes.Equal(b, cur) {
-			t.Fatalf("step %d: head bytes differ", i)
-		}
+	crash(db)
+	if err = os.WriteFile(filepath.Join(dir, "state"), old, 0o644); err != nil {
+		t.Fatal(err)
 	}
-}
-
-// TestSyncUndoClearsWrittenBackLog covers undone entries that reached disk by
-// writeback: the next barrier must clear them, or a later recovery would see
-// an aligned stale entry as a torn tail and undo it over committed bytes.
-func TestSyncUndoClearsWrittenBackLog(t *testing.T) {
-	dir := t.TempDir()
-	o := Options{MaxLeaves: 1 << 14, Sync: true}
-	db, err := Open(dir, o)
-	if err != nil {
+	if db, err = Open(dir, o); err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	r, err := db.Alloc(LeafSize)
-	if err != nil {
-		t.Fatal(err)
+	if db.Version() != ver || db.Root() != root {
+		t.Fatalf("recovered version %d, want %d", db.Version(), ver)
 	}
-	root, ver, err := db.Commit()
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := db.Mark()
-	// A 12-byte write makes a 56-byte entry, the size of a block record, so
-	// the second stale entry starts right after the next block record.
-	db.Write(r, 0, bytes.Repeat([]byte{1}, 12))
-	db.Write(r, 0, bytes.Repeat([]byte{2}, 12))
-	disk := bytes.Clone(db.cur.m) // written back before the undo
-	db.Undo(m)
-	page := int64(os.Getpagesize())
-	from, high := db.blockStart/page*page, db.logHigh
-	if root, ver, err = db.Commit(); err != nil {
-		t.Fatal(err)
-	}
-	end := max(db.cur.tail, high)
-	copy(disk[from:end], db.cur.m[from:end])
-	cdir := t.TempDir()
-	for _, d := range []string{"log", "epochs"} {
-		if err := os.MkdirAll(filepath.Join(cdir, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, name := range []string{"state", "tree"} {
-		b, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err = os.WriteFile(filepath.Join(cdir, name), b, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(cdir, "log", filepath.Base(db.cur.f.Name())), disk, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, err := Open(cdir, o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer got.Close()
-	if got.Version() != ver || got.Root() != root {
-		t.Fatalf("recovered version %d, want %d", got.Version(), ver)
+	got := make([]byte, len(want))
+	db.Read(r, 0, len(got), got)
+	if !bytes.Equal(got, want) {
+		t.Fatal("recovered bytes differ")
 	}
 }

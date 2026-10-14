@@ -133,7 +133,7 @@ func TestXORHistoryAfterLivePruning(t *testing.T) {
 
 func TestXORHistoryRewindRewrite(t *testing.T) {
 	dir := t.TempDir()
-	opts := Options{MaxLeaves: 1 << 14, EpochVersions: 2, RetainVersions: 8, Sync: true}
+	opts := Options{MaxLeaves: 1 << 14, EpochVersions: 2, RetainVersions: 8}
 	db, err := Open(dir, opts)
 	if err != nil {
 		t.Fatal(err)

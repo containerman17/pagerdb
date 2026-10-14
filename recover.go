@@ -48,21 +48,10 @@ func (db *DB) undo(m Mark) {
 func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
 
 func (db *DB) undoEntries(pos, seq int64, cut bool) {
-	staged := len(db.stage) > 0
 	for i := db.seq() - 1; i >= seq; i-- {
 		e := db.entries[i-db.entryBase]
+		copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
 		db.markDirty(e.off, uint64(e.n))
-		// A staged entry never reached the state mapping.
-		if !staged || i < db.appliedSeq {
-			copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
-			if db.o.Sync && cut {
-				page := uint64(os.Getpagesize())
-				from := e.off / page * page
-				if err := unix.Msync(db.state[from:e.off+uint64(e.n)], unix.MS_SYNC); err != nil {
-					panic(fmt.Sprintf("pagerdb: sync undo: %v", err))
-				}
-			}
-		}
 		if cut {
 			e.c.m[e.pos] = 0
 		}
@@ -78,12 +67,8 @@ func (db *DB) undoEntries(pos, seq int64, cut bool) {
 		clear(db.entries[i-db.entryBase:])
 		db.entries = db.entries[:i-db.entryBase]
 	}
-	if staged {
-		db.restage()
-	}
 	if cut {
 		clear(db.cur.m[pos:db.cur.tail])
-		db.logHigh = max(db.logHigh, db.cur.tail)
 	}
 	db.cur.tail = pos
 	clear(db.segCache)
@@ -168,10 +153,10 @@ func openChunk(path string, epoch uint64) (*chunk, error) {
 	return &chunk{epoch: epoch, f: f, m: m}, nil
 }
 
-// open recovers the store: the last chunk with a checkpoint is replayed (complete blocks
-// forward with new bytes, the torn tail backwards with old bytes), the leaves it touched are
-// rehashed and the root must match its last block record. Older unsealed chunks are loaded
-// into the window and queued for sealing.
+// open recovers the store. After an unclean shutdown every kept chunk is replayed oldest
+// first (complete blocks forward with new bytes, the torn tail of the last chunk backwards
+// with old bytes), the tree is rebuilt and the root must match the last block record.
+// Older unsealed chunks are loaded into the window and queued for sealing.
 func (db *DB) open() error {
 	_, stateErr := os.Stat(filepath.Join(db.dir, "state"))
 	mark, _ := os.ReadFile(filepath.Join(db.dir, "clean"))
@@ -252,6 +237,7 @@ func (db *DB) open() error {
 		db.blocks = []block{{ver: 0, root: db.root, c: c, end: cpRec}}
 		db.rootIdx[db.root] = 0
 		db.blockStart = cpRec
+		db.durableEpoch = 1
 		go db.sealer()
 		return nil
 	}
@@ -288,8 +274,17 @@ func (db *DB) open() error {
 			last.close()
 			return fmt.Errorf("pagerdb: chunk %d: no checkpoint", e)
 		}
+		if n := len(db.blocks); n > 0 && (db.blocks[n-1].ver != cpVer || db.blocks[n-1].root != cpRoot) {
+			c.close()
+			last.close()
+			return fmt.Errorf("pagerdb: recovery: log gap before chunk %d", e)
+		}
 		c.start = cpVer
-		c.tail = int64(len(c.m))
+		// The sealer truncates the file; a crash may leave preallocated space.
+		c.tail = cpRec
+		if len(bl) > 0 {
+			c.tail = bl[len(bl)-1].end
+		}
 		db.chunks = append(db.chunks, c)
 		db.addBlocks(c, cpVer, cpRoot, bl)
 		if e <= latest {
@@ -298,11 +293,18 @@ func (db *DB) open() error {
 			queue = append(queue, c)
 		}
 	}
+	if n := len(db.blocks); n > 0 {
+		if v, r, _, _, _ := scan(last.m[:cpRec]); db.blocks[n-1].ver != v || db.blocks[n-1].root != r {
+			last.close()
+			return fmt.Errorf("pagerdb: recovery: log gap before chunk %d", last.epoch)
+		}
+	}
 	db.chunks = append(db.chunks, last)
 	db.cur = last
 	if err := db.replay(last); err != nil {
 		return err
 	}
+	db.durableEpoch = last.epoch
 	go db.sealer()
 	db.mu.Lock()
 	for _, c := range queue {
@@ -345,6 +347,12 @@ func (db *DB) replay(c *chunk) error {
 		}
 	}
 	need := uint64(0)
+	for _, e := range db.entries {
+		if e.off > db.maxLeaves*LeafSize || uint64(e.n) > db.maxLeaves*LeafSize-e.off {
+			return fmt.Errorf("pagerdb: recovery: log state offset out of bounds")
+		}
+		need = max(need, e.off+uint64(e.n))
+	}
 	for _, b := range bl {
 		for _, pos := range b.entries {
 			off, n := le.Uint64(c.m[pos+24:]), uint64(le.Uint32(c.m[pos+8:]))
@@ -371,6 +379,11 @@ func (db *DB) replay(c *chunk) error {
 			src = src[n:]
 		}
 		copy(db.state[fo:fo+n], src[:n])
+	}
+	// The state file is synced at least as far as the oldest kept checkpoint,
+	// so redoing every kept chunk in order reaches the last complete block.
+	for _, e := range db.entries {
+		copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr+int64(e.n):])
 	}
 	for _, b := range bl {
 		for _, pos := range b.entries {
@@ -405,15 +418,6 @@ func (db *DB) replay(c *chunk) error {
 		return err
 	}
 	clear(c.m[end:])
-	if db.o.Sync {
-		from := end / int64(os.Getpagesize()) * int64(os.Getpagesize())
-		if err := unix.Msync(c.m[from:], unix.MS_SYNC); err != nil {
-			return err
-		}
-		if err := c.f.Sync(); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 
@@ -442,7 +446,7 @@ func (db *DB) Rewind(v uint64) error {
 	if err := db.writeRewindIntent(v, b.c.epoch, b.end); err != nil {
 		return err
 	}
-	db.cur, db.logHigh = b.c, 0
+	db.cur = b.c
 	db.cur.sealed = false
 	seq := db.seq()
 	for seq > db.entryBase && db.entries[seq-1-db.entryBase].ver > v {
@@ -487,7 +491,12 @@ func (db *DB) Rewind(v uint64) error {
 		db.rootIdx[b.root] = b.ver
 	}
 	db.blockStart, db.blockSeq = b.end, seq
-	return db.syncAll()
+	if err := db.syncAll(); err != nil {
+		return err
+	}
+	// Epoch numbers restart at b.c, so durability restarts there too.
+	db.durableEpoch = b.c.epoch
+	return nil
 }
 
 func validCheckpoint(m []byte) bool {

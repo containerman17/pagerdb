@@ -64,9 +64,6 @@ type Region uint32
 type Options struct {
 	// MaxLeaves sets the leaf capacity at creation; it must be a power of two.
 	MaxLeaves uint64 // tree capacity in 1 KiB leaves, power of two, fixed at creation
-	// Sync makes every Commit durable with one log barrier. Writes are staged
-	// until that barrier, so state never holds a change without durable undo.
-	Sync bool
 	// RetainVersions sets rewind retention; zero selects 4096 versions.
 	RetainVersions uint64 // versions available for Rewind (default 4096)
 	// EpochVersions sets the epoch version limit; zero selects 10000.

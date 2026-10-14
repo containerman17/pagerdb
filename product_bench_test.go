@@ -118,36 +118,28 @@ func benchmarkSustained(b *testing.B, seal, untimedSeal bool) {
 }
 
 func BenchmarkDurabilityLoop(b *testing.B) {
-	for _, syncMode := range []bool{false, true} {
-		name := "NoSync"
-		if syncMode {
-			name = "Sync"
+	db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 14, EpochVersions: 10000})
+	if err != nil {
+		b.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(64 << 10)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, _, err = db.Commit(); err != nil {
+		b.Fatal(err)
+	}
+	var value [64]byte
+	b.ResetTimer()
+	for block := 0; block < b.N; block++ {
+		le.PutUint64(value[56:], uint64(block+1))
+		for leaf := 0; leaf < 64; leaf++ {
+			db.Write(r, leaf*LeafSize, value[:])
 		}
-		b.Run(name, func(b *testing.B) {
-			db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 14, Sync: syncMode, EpochVersions: 10000})
-			if err != nil {
-				b.Fatal(err)
-			}
-			defer db.Close()
-			r, err := db.Alloc(64 << 10)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if _, _, err = db.Commit(); err != nil {
-				b.Fatal(err)
-			}
-			var value [64]byte
-			b.ResetTimer()
-			for block := 0; block < b.N; block++ {
-				le.PutUint64(value[56:], uint64(block+1))
-				for leaf := 0; leaf < 64; leaf++ {
-					db.Write(r, leaf*LeafSize, value[:])
-				}
-				if _, _, err = db.Commit(); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
+		if _, _, err = db.Commit(); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -299,76 +291,68 @@ func TestViewMapSparseRSS(t *testing.T) {
 // bytes, including allocation metadata; MB/s uses that state byte count.
 // Setup, root checks, and Close are outside the measured interval.
 func BenchmarkOpenVerified(b *testing.B) {
-	for _, syncMode := range []bool{false, true} {
-		name := "NoSync"
-		if syncMode {
-			name = "Sync"
+	dir := b.TempDir()
+	options := Options{MaxLeaves: 1 << 14}
+	db, err := Open(dir, options)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.Cleanup(func() {
+		if db != nil {
+			db.Close()
 		}
-		b.Run(name, func(b *testing.B) {
-			dir := b.TempDir()
-			options := Options{MaxLeaves: 1 << 14, Sync: syncMode}
-			db, err := Open(dir, options)
-			if err != nil {
-				b.Fatal(err)
-			}
-			b.Cleanup(func() {
-				if db != nil {
-					db.Close()
-				}
-			})
-			const payloadBytes = 4 << 20
-			r, err := db.Alloc(payloadBytes)
-			if err != nil {
-				b.Fatal(err)
-			}
-			payload := make([]byte, payloadBytes)
-			for i := range payload {
-				payload[i] = 0x6d
-			}
-			db.Write(r, 0, payload)
-			root, version, err := db.Commit()
-			if err != nil {
-				b.Fatal(err)
-			}
-			allocated := db.hdr(hNextSeg) * SegSize
-			if err = db.Close(); err != nil {
-				b.Fatal(err)
-			}
-			db = nil
-			for _, mode := range []string{"Clean", "Unclean", "Verify"} {
-				b.Run(mode, func(b *testing.B) {
-					b.SetBytes(int64(allocated))
-					b.StopTimer()
-					b.ResetTimer()
-					for range b.N {
-						// Without the marker Open takes the full verification path.
-						if mode == "Unclean" {
-							if err := os.Remove(filepath.Join(dir, "clean")); err != nil {
-								b.Fatal(err)
-							}
-						}
-						b.StartTimer()
-						db, err = Open(dir, options)
-						if err == nil && mode == "Verify" {
-							err = db.Verify()
-						}
-						b.StopTimer()
-						if err != nil {
-							b.Fatal(err)
-						}
-						if db.root != root || db.version != version || db.unclean != (mode == "Unclean") {
-							b.Fatal("Open did not preserve the committed root and version")
-						}
-						err = db.Close()
-						db = nil
-						if err != nil {
-							b.Fatal(err)
-						}
+	})
+	const payloadBytes = 4 << 20
+	r, err := db.Alloc(payloadBytes)
+	if err != nil {
+		b.Fatal(err)
+	}
+	payload := make([]byte, payloadBytes)
+	for i := range payload {
+		payload[i] = 0x6d
+	}
+	db.Write(r, 0, payload)
+	root, version, err := db.Commit()
+	if err != nil {
+		b.Fatal(err)
+	}
+	allocated := db.hdr(hNextSeg) * SegSize
+	if err = db.Close(); err != nil {
+		b.Fatal(err)
+	}
+	db = nil
+	for _, mode := range []string{"Clean", "Unclean", "Verify"} {
+		b.Run(mode, func(b *testing.B) {
+			b.SetBytes(int64(allocated))
+			b.StopTimer()
+			b.ResetTimer()
+			for range b.N {
+				// Without the marker Open takes the full verification path.
+				if mode == "Unclean" {
+					if err := os.Remove(filepath.Join(dir, "clean")); err != nil {
+						b.Fatal(err)
 					}
-					b.ReportMetric(float64(payloadBytes)/(1<<20), "data-MiB")
-					b.ReportMetric(float64(allocated), "state-B")
-				})
+				}
+				b.StartTimer()
+				db, err = Open(dir, options)
+				if err == nil && mode == "Verify" {
+					err = db.Verify()
+				}
+				b.StopTimer()
+				if err != nil {
+					b.Fatal(err)
+				}
+				if db.root != root || db.version != version || db.unclean != (mode == "Unclean") {
+					b.Fatal("Open did not preserve the committed root and version")
+				}
+				err = db.Close()
+				db = nil
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
+			b.ReportMetric(float64(payloadBytes)/(1<<20), "data-MiB")
+			b.ReportMetric(float64(allocated), "state-B")
 		})
 	}
 }

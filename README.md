@@ -133,36 +133,32 @@ Both use bounded buffers, independent of image size.
 
 ## Durability and ownership
 
-`Sync: true` makes undo records durable before any corresponding shared state byte
-can change, with one log barrier (msync and fsync) per block. Write and allocator
-writes stage their new bytes in memory instead of the shared state mapping. Read,
-Views, allocation and hashing see staged bytes through an overlay. Commit writes the
-block record, makes the whole block durable with one barrier, then applies the
-staged bytes to the mapping. Touch logs old bytes and makes the log durable (one
-barrier) before returning, and applies staged writes first, because the caller then
-writes the mapping directly. DB.Map applies staged writes the same way. A DB.Map
-slice therefore shows Write bytes from the next Commit, Touch or Map call on; until
-then use Read. Undo drops staged bytes without touching the mapping. Any state page
-can reach disk at any time, but it never holds a byte whose undo record is not
-durable. Log bytes that an undo clears are included in the next barrier, so undone
-entries cannot reappear as a torn tail. Recovery replays complete commits and undoes
-unfinished writes. State/tree checkpoints and directory
-changes are synced before old recovery data can be discarded. Under the operating
-system's filesystem sync guarantees, acknowledged commits survive power loss.
-A committed record that reached storage immediately before a crash can also recover
-even if the caller did not receive Commit's return value.
+Write and Commit never fsync. A crash recovers the last complete version, or Open
+fails loudly; a validator then rewinds to a durable version or resyncs and
+re-executes. Commit appends the block record to the mapped log and rotation clones
+the state for the sealer. The only per-epoch I/O on the commit path is a writeback
+of the mapped state (msync, no fsync) so that the clone sees mapped writes. In the
+background, after an epoch is sealed, the sealer writes back and fsyncs the state
+file and only then lets old log chunks go. The kept log chunks therefore always
+reach back to a checkpoint that the synced state file covers.
 
-`Sync: false` skips per-write and per-commit durability barriers. A clean-shutdown
-marker is removed and its removal synced before opening the database for use.
-Close syncs the files before creating the marker. The marker records the closed
-version and root with a checksum. A clean open checks the marker, the log head and
-the stored tree root against each other and then trusts the stored tree. Any
-mismatch, a damaged marker or a missing marker selects the unclean path, which
-rebuilds the tree from state bytes and requires the recorded root. `DB.Verify`
-rehashes the whole state on demand for operators. An unclean open either recovers a
-verified version or returns an error naming the recovery problem. Lost commits are
-possible in this mode. Lost log bytes with surviving state changes cannot silently
-produce an accepted mismatched head. Detection does not repair missing undo data.
+An unclean open redoes the new bytes of every kept chunk, oldest first, then undoes
+the torn tail of the last chunk with its old bytes, rebuilds the tree and requires
+the root of the last complete block. Each chunk's checkpoint must match the previous
+chunk's last block, or Open reports a log gap. The kernel may write back any state
+or log page at any time, so a state page can reach disk without the log page that
+describes it. That case is detected (the rebuilt root differs) and not repaired.
+Lost commits are possible: a crash can lose blocks whose log pages were not written
+back.
+
+A clean-shutdown marker is removed and its removal synced before opening the
+database for use. Close syncs the files before creating the marker. The marker
+records the closed version and root with a checksum. A clean open checks the marker,
+the log head and the stored tree root against each other and then trusts the stored
+tree. Any mismatch, a damaged marker or a missing marker selects the unclean path.
+`DB.Verify` rehashes the whole state on demand for operators. Rewind and Close sync
+the state, tree and log before they return. Sealed epoch files are fsynced by the
+local store.
 
 One goroutine owns mutations and the head Read/Root/Version API. Views can read from
 other goroutines while the owner writes. Every direct head mapping write must have
@@ -206,12 +202,12 @@ Verify(root [32]byte, proof Proof) bool
 (*View) Close()
 ```
 
-Options are `MaxLeaves`, `Sync`, `RetainVersions`, `EpochVersions`, `EpochBytes`, and
-`Store`. Zero values select the defaults described above; Sync defaults to false.
+Options are `MaxLeaves`, `RetainVersions`, `EpochVersions`, `EpochBytes`, and
+`Store`. Zero values select the defaults described above.
 Head range violations panic like slice bounds violations. Proof and Verify reject pending
 uncommitted writes. DB.Map slices are invalidated by Free/Grow or allocation rollback.
 View.Map snapshots remain valid until View.Close. Mutation methods without an error
-return can panic on storage failures, including log growth and Touch barriers in Sync mode.
+return can panic on storage failures, including log growth.
 Undo can also panic if restoring durable state fails. Commit can advance the
 version and then return a rotation or sealing error; inspect its returned version.
 Import requires a destination that does not exist and is not created concurrently.
@@ -308,8 +304,7 @@ commit, 56 bytes:
 CRC-32C uses the Castagnoli polynomial. The entry undo checksum covers bytes
 4..11, 16..31, and the old bytes. The commit checksum covers all complete entry
 bytes since the preceding checkpoint or commit, then commit bytes 4..47. A chunk starts with one checkpoint. Unused tail
-bytes are zero. A tag alone is not a durability barrier; Sync performs explicit
-log synchronization before staged bytes reach the shared state mapping.
+bytes are zero. A tag alone is not a durability barrier.
 
 `rewind` is a 32-byte durable intent: `PGREWND2 [8] | target version u64 |
 target epoch u64 | target log end u64`. The log end is immediately after the target
@@ -555,7 +550,8 @@ UNVERIFIED. CI is configured but was not published or run remotely.
 - Version 1 files require migration; they are not opened as version 2.
 - Rewind is limited by configured retention. Sealed history remains available for reads.
 - Cumulative sealed indexes trade extra disk space for logarithmic lookup per changed epoch.
-- Sync costs one barrier per Commit, plus one per Touch call and per DB.Map call with staged writes. On macOS the barrier uses F_FULLFSYNC.
+- Commits are not durable when Commit returns. A crash can lose recent blocks or, if a state page reached disk before its log page, make Open fail; the caller then restores or re-executes.
+- An unclean Open redoes every kept log chunk, so its cost also grows with the retained log.
 - An unclean Open and DB.Verify hash the whole allocated state, so their cost grows with state size. A clean Open checksums only the retained log chunks.
 - Without filesystem cloning, private mapping setup copies sparse file extents.
 - Linux userfaultfd needs cgo and a native fault thread. Map setup reconstructs changed historical leaves into a snapshot file. A Go fault handler cannot safely serve arbitrary Go slice access during garbage collection.
