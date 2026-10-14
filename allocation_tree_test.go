@@ -2,6 +2,8 @@ package pagerdb
 
 import (
 	"crypto/sha256"
+	"golang.org/x/sys/unix"
+	"os"
 	"testing"
 )
 
@@ -15,6 +17,18 @@ func TestTreeTiles(t *testing.T) {
 				t.Fatalf("depth %d node %d offset %d", depth, i, off)
 			}
 			seen[off] = true
+		}
+	}
+}
+
+func TestTreePathUsesFourTiles(t *testing.T) {
+	for leaf := uint64(0); leaf < 1<<24; leaf += 7919 {
+		pages := make(map[uint64]bool)
+		for i := (uint64(1) << 24) + leaf; i > 0; i >>= 1 {
+			pages[treeOffset(i, 24)/4096] = true
+		}
+		if len(pages) != 4 {
+			t.Fatalf("leaf %d uses %d tiles", leaf, len(pages))
 		}
 	}
 }
@@ -37,7 +51,7 @@ func TestTreeRootMatchesHeap(t *testing.T) {
 	hashes := make([][32]byte, db.maxLeaves)
 	var zero [LeafSize]byte
 	for i := range hashes {
-		if (i+1)*LeafSize <= len(db.state) {
+		if uint64((i+1)*LeafSize) <= db.hdr(hNextSeg)*SegSize {
 			hashes[i] = sha256.Sum256(db.state[i*LeafSize : (i+1)*LeafSize])
 		} else {
 			hashes[i] = sha256.Sum256(zero[:])
@@ -149,5 +163,81 @@ func benchmarkTreePath(b *testing.B, tiled bool) {
 	b.StopTimer()
 	if sum != 0 {
 		b.Fatal(sum)
+	}
+}
+
+func TestRegionTableAddsSegment(t *testing.T) {
+	db, err := Open(t.TempDir(), Options{MaxLeaves: 1 << 18})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Allocate identifiers directly to isolate the table growth boundary.
+	var r Region
+	for range regionsPerSegment {
+		r, err = db.allocID()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if uint64(r) != regionsPerSegment {
+		t.Fatal(r)
+	}
+	first, second := db.hdr(db.regTab), db.hdr(db.regTab+8)
+	if first == 0 || second == 0 || first == second {
+		t.Fatalf("table segments %d %d", first, second)
+	}
+	if db.regionOff(r) != second*SegSize {
+		t.Fatal("second table segment offset")
+	}
+}
+
+func BenchmarkTreeColdPath(b *testing.B) {
+	for _, tiled := range []bool{false, true} {
+		name := "Heap"
+		if tiled {
+			name = "Tiles"
+		}
+		b.Run(name, func(b *testing.B) {
+			const depth = 24
+			n := uint64(1) << depth
+			f, err := os.CreateTemp(b.TempDir(), "tree")
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer f.Close()
+			size := 2 * n * 32
+			if tiled {
+				size = treeStorageSize(n)
+			}
+			if err = f.Truncate(int64(size)); err != nil {
+				b.Fatal(err)
+			}
+			tree, err := unix.Mmap(int(f.Fd()), 0, int(size), unix.PROT_READ, unix.MAP_SHARED)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer unix.Munmap(tree)
+			var sum byte
+			b.ResetTimer()
+			for k := 0; k < b.N; k++ {
+				b.StopTimer()
+				if err = unix.Madvise(tree, unix.MADV_DONTNEED); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				for i := n + (uint64(k) * 11400714819323198485 & (n - 1)); i > 0; i >>= 1 {
+					off := i * 32
+					if tiled {
+						off = treeOffset(i, depth)
+					}
+					sum += tree[off]
+				}
+			}
+			b.StopTimer()
+			if sum != 0 {
+				b.Fatal(sum)
+			}
+		})
 	}
 }
