@@ -2,6 +2,7 @@ package pagerdb
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 )
 
@@ -59,4 +60,82 @@ func Verify(root [32]byte, p Proof) bool {
 		}
 	}
 	return h == root
+}
+
+// Verify rehashes the allocated state, compares every tree node on the way
+// with the stored tree and checks the result against the committed root. It
+// reads the whole allocated state while holding the database lock. Open runs
+// the same full check only after an unclean shutdown.
+func (db *DB) Verify() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.seq() != db.blockSeq || len(db.touches) != 0 {
+		return ErrPending
+	}
+	if len(db.dirty) > 0 {
+		db.hashDirty() // undone writes can leave dirty leaves at committed bytes
+	}
+	fi, err := db.stateF.Stat()
+	if err != nil {
+		return err
+	}
+	span := min(10, db.depth)
+	leaves := uint64(fi.Size()) / LeafSize
+	chunk := uint64(1) << span
+	roots := make([][32]byte, (leaves+chunk-1)/chunk)
+	errs := make([]error, len(roots))
+	parallel(len(roots), func(lo, hi int) {
+		level := make([][32]byte, chunk)
+		for c := lo; c < hi; c++ {
+			first := uint64(c) * chunk
+			for i := range level {
+				if leaf := first + uint64(i); leaf < leaves {
+					level[i] = sha256.Sum256(db.state[leaf*LeafSize : (leaf+1)*LeafSize])
+				} else {
+					level[i] = db.empty[0]
+				}
+			}
+			errs[c] = db.checkLevel(level, db.maxLeaves+first, 0)
+			for l := 1; l <= span && errs[c] == nil; l++ {
+				n := chunk >> l
+				for i := range n {
+					level[i] = hashPair(level[2*i][:], level[2*i+1][:])
+				}
+				errs[c] = db.checkLevel(level[:n], (db.maxLeaves+first)>>l, l)
+			}
+			roots[c] = level[0]
+		}
+	})
+	if err := errors.Join(errs...); err != nil {
+		return err
+	}
+	// Above the chunks only a prefix of each level is nonempty.
+	level := roots
+	for l := span + 1; l <= db.depth; l++ {
+		if len(level)%2 == 1 {
+			level = append(level, db.empty[l-1])
+		}
+		for i := range len(level) / 2 {
+			level[i] = hashPair(level[2*i][:], level[2*i+1][:])
+		}
+		level = level[:len(level)/2]
+		if err := db.checkLevel(level, db.maxLeaves>>l, l); err != nil {
+			return err
+		}
+	}
+	if level[0] != db.root {
+		return fmt.Errorf("pagerdb: verify: state root %x does not match committed root %x", level[0], db.root)
+	}
+	return nil
+}
+
+// checkLevel compares computed hashes of nodes first, first+1, ... at level
+// with the stored tree.
+func (db *DB) checkLevel(hashes [][32]byte, first uint64, level int) error {
+	for i, h := range hashes {
+		if [32]byte(db.node(first+uint64(i), level)) != h {
+			return fmt.Errorf("pagerdb: verify: tree node %d at level %d differs from state", first+uint64(i), level)
+		}
+	}
+	return nil
 }

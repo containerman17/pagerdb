@@ -154,8 +154,12 @@ even if the caller did not receive Commit's return value.
 
 `Sync: false` skips per-write and per-commit durability barriers. A clean-shutdown
 marker is removed and its removal synced before opening the database for use.
-Close syncs the files before creating the marker. Open always rebuilds the tree from
-state bytes and requires the recorded root. An unclean open either recovers a
+Close syncs the files before creating the marker. The marker records the closed
+version and root with a checksum. A clean open checks the marker, the log head and
+the stored tree root against each other and then trusts the stored tree. Any
+mismatch, a damaged marker or a missing marker selects the unclean path, which
+rebuilds the tree from state bytes and requires the recorded root. `DB.Verify`
+rehashes the whole state on demand for operators. An unclean open either recovers a
 verified version or returns an error naming the recovery problem. Lost commits are
 possible in this mode. Lost log bytes with surviving state changes cannot silently
 produce an accepted mismatched head. Detection does not repair missing undo data.
@@ -193,6 +197,7 @@ Import(dir string, r io.Reader, expectedRoot [32]byte) (*DB, error)
 (*DB) View(version uint64) (*View, error)
 (*DB) ViewRoot(root [32]byte) (*View, error)
 (*DB) Proof(region Region, off int) (Proof, error)
+(*DB) Verify() error
 Verify(root [32]byte, proof Proof) bool
 (*View) Read(region Region, off, n int, buf []byte) error
 (*View) Copy(region Region) ([]byte, error)
@@ -203,8 +208,8 @@ Verify(root [32]byte, proof Proof) bool
 
 Options are `MaxLeaves`, `Sync`, `RetainVersions`, `EpochVersions`, `EpochBytes`, and
 `Store`. Zero values select the defaults described above; Sync defaults to false.
-Head range violations panic like slice bounds violations. Proof rejects pending
-dirty state. DB.Map slices are invalidated by Free/Grow or allocation rollback.
+Head range violations panic like slice bounds violations. Proof and Verify reject pending
+uncommitted writes. DB.Map slices are invalidated by Free/Grow or allocation rollback.
 View.Map snapshots remain valid until View.Close. Mutation methods without an error
 return can panic on storage failures, including log growth and Touch barriers in Sync mode.
 Undo can also panic if restoring durable state fails. Commit can advance the
@@ -281,7 +286,7 @@ offset     = tile*4096 + (local-1)*32
 ```
 
 An all-zero hash slot denotes the precomputed empty subtree hash at its level.
-Open rebuilds the tree from state bytes, so the tree is a verified derived file.
+An unclean open rebuilds the tree from state bytes, so the tree is a derived file.
 
 ### Log chunks
 
@@ -309,7 +314,8 @@ log synchronization before staged bytes reach the shared state mapping.
 `rewind` is a 32-byte durable intent: `PGREWND2 [8] | target version u64 |
 target epoch u64 | target log end u64`. The log end is immediately after the target
 commit/checkpoint. Recovery repeats restoration before removing the intent.
-`clean` contains `clean\n`; its presence records a completed clean close.
+`clean` is 52 bytes: `PGCLEAN1 [8] | version u64 | root [32] | CRC-32C of bytes
+0..47 u32`. A valid marker records a completed clean close at that head.
 
 ### Sealed epochs
 
@@ -550,7 +556,7 @@ UNVERIFIED. CI is configured but was not published or run remotely.
 - Rewind is limited by configured retention. Sealed history remains available for reads.
 - Cumulative sealed indexes trade extra disk space for logarithmic lookup per changed epoch.
 - Sync costs one barrier per Commit, plus one per Touch call and per DB.Map call with staged writes. On macOS the barrier uses F_FULLFSYNC.
-- Open verifies the whole allocated state. Large stores therefore have proportional recovery cost.
+- An unclean Open and DB.Verify hash the whole allocated state, so their cost grows with state size. A clean Open checksums only the retained log chunks.
 - Without filesystem cloning, private mapping setup copies sparse file extents.
 - Linux userfaultfd needs cgo and a native fault thread. Map setup reconstructs changed historical leaves into a snapshot file. A Go fault handler cannot safely serve arbitrary Go slice access during garbage collection.
 - A userfaultfd read failure is fatal rather than supplying incorrect page bytes.

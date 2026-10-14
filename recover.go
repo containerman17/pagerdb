@@ -174,10 +174,13 @@ func openChunk(path string, epoch uint64) (*chunk, error) {
 // into the window and queued for sealing.
 func (db *DB) open() error {
 	_, stateErr := os.Stat(filepath.Join(db.dir, "state"))
-	_, cleanErr := os.Stat(filepath.Join(db.dir, "clean"))
-	db.unclean = stateErr == nil && os.IsNotExist(cleanErr)
-	// Removing the marker is durable before any mapped mutation. Recovery verifies
-	// the complete state even after a clean close, so the marker is diagnostic only.
+	mark, _ := os.ReadFile(filepath.Join(db.dir, "clean"))
+	db.clean = len(mark) == cleanRec && string(mark[:8]) == cleanMagic && le.Uint32(mark[48:]) == crc32.Checksum(mark[:48], castagnoli)
+	if db.clean {
+		db.cleanVer, db.cleanRoot = le.Uint64(mark[8:]), [32]byte(mark[16:48])
+	}
+	db.unclean = stateErr == nil && !db.clean
+	// Removing the marker is durable before any mapped mutation.
 	if err := os.Remove(filepath.Join(db.dir, "clean")); err != nil && !os.IsNotExist(err) {
 		return err
 	}
@@ -325,6 +328,22 @@ func (db *DB) addBlocks(c *chunk, cpVer uint64, cpRoot [32]byte, bl []scanned) {
 func (db *DB) replay(c *chunk) error {
 	cpVer, cpRoot, bl, tail, _ := scan(c.m)
 	c.start = cpVer
+	// After a clean close the state and tree files were synced at the head the
+	// marker names. If the log agrees and has no torn tail, trust the stored
+	// tree root instead of rehashing the whole state.
+	if db.clean && len(tail) == 0 {
+		end, ver, root := int64(cpRec), cpVer, cpRoot
+		if len(bl) > 0 {
+			end, ver, root = bl[len(bl)-1].end, bl[len(bl)-1].ver, bl[len(bl)-1].root
+		}
+		if ver == db.cleanVer && root == db.cleanRoot && [32]byte(db.node(1, db.depth)) == root {
+			db.version, db.root = ver, root
+			c.tail = end
+			db.addBlocks(c, cpVer, cpRoot, bl)
+			db.blockStart, db.blockSeq = end, db.seq()
+			return db.growState(db.hdr(hNextSeg))
+		}
+	}
 	need := uint64(0)
 	for _, b := range bl {
 		for _, pos := range b.entries {

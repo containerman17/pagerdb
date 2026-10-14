@@ -180,6 +180,11 @@ func testModel(t *testing.T, syncMode bool) {
 		if want := naiveRoot(t, dir, maxLeaves); root != want {
 			t.Fatalf("version %d: root %x, naive %x", ver, root, want)
 		}
+		if block%10 == 0 {
+			if err = db.Verify(); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
 	large := 0
 	for r := range m {

@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -291,7 +292,9 @@ func TestViewMapSparseRSS(t *testing.T) {
 	}
 }
 
-// BenchmarkOpenVerified times Open on an existing, cleanly closed database.
+// BenchmarkOpenVerified times Open on an existing database: Clean trusts the
+// tree after a clean close, Unclean removes the marker to force the full
+// verification, and Verify times a clean Open plus DB.Verify.
 // The payload is 4 MiB of nonzero bytes. state-B reports all allocated state
 // bytes, including allocation metadata; MB/s uses that state byte count.
 // Setup, root checks, and Close are outside the measured interval.
@@ -332,27 +335,40 @@ func BenchmarkOpenVerified(b *testing.B) {
 				b.Fatal(err)
 			}
 			db = nil
-			b.SetBytes(int64(allocated))
-			b.StopTimer()
-			b.ResetTimer()
-			for range b.N {
-				b.StartTimer()
-				db, err = Open(dir, options)
-				b.StopTimer()
-				if err != nil {
-					b.Fatal(err)
-				}
-				if db.root != root || db.version != version {
-					b.Fatal("Open did not preserve the committed root and version")
-				}
-				err = db.Close()
-				db = nil
-				if err != nil {
-					b.Fatal(err)
-				}
+			for _, mode := range []string{"Clean", "Unclean", "Verify"} {
+				b.Run(mode, func(b *testing.B) {
+					b.SetBytes(int64(allocated))
+					b.StopTimer()
+					b.ResetTimer()
+					for range b.N {
+						// Without the marker Open takes the full verification path.
+						if mode == "Unclean" {
+							if err := os.Remove(filepath.Join(dir, "clean")); err != nil {
+								b.Fatal(err)
+							}
+						}
+						b.StartTimer()
+						db, err = Open(dir, options)
+						if err == nil && mode == "Verify" {
+							err = db.Verify()
+						}
+						b.StopTimer()
+						if err != nil {
+							b.Fatal(err)
+						}
+						if db.root != root || db.version != version || db.unclean != (mode == "Unclean") {
+							b.Fatal("Open did not preserve the committed root and version")
+						}
+						err = db.Close()
+						db = nil
+						if err != nil {
+							b.Fatal(err)
+						}
+					}
+					b.ReportMetric(float64(payloadBytes)/(1<<20), "data-MiB")
+					b.ReportMetric(float64(allocated), "state-B")
+				})
 			}
-			b.ReportMetric(float64(payloadBytes)/(1<<20), "data-MiB")
-			b.ReportMetric(float64(allocated), "state-B")
 		})
 	}
 }

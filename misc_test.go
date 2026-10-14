@@ -5,7 +5,10 @@ import (
 	"errors"
 	"maps"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -307,4 +310,80 @@ func TestProofAfterUndo(t *testing.T) {
 	if db.Version() != v || db.Root() != root {
 		t.Fatal("proof changed committed version")
 	}
+}
+
+// TestCleanOpenAndVerify checks that a clean Open trusts the stored tree, that
+// Verify finds a tree node that disagrees with state, and that an unclean Open
+// rebuilds the tree.
+func TestCleanOpenAndVerify(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.Alloc(3 << 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Write(r, 5000, []byte("leaf"))
+	root, v, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	db.Write(r, 0, []byte{1})
+	if err = db.Verify(); err != ErrPending {
+		t.Fatalf("Verify with pending writes: %v", err)
+	}
+	seg := db.loc(r).segs[0]
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt a leaf hash in the tree file; the root node stays intact.
+	tree, err := os.OpenFile(filepath.Join(dir, "tree"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := seg*SegSize/LeafSize + 4
+	if _, err = tree.WriteAt([]byte{0xff}, int64(treeOffset(db.maxLeaves+leaf, db.depth))); err != nil {
+		t.Fatal(err)
+	}
+	tree.Close()
+	db, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if db.Root() != root || db.Version() != v {
+		t.Fatal("clean open changed the head")
+	}
+	if err = db.Verify(); err == nil || !strings.Contains(err.Error(), "tree node") {
+		t.Fatalf("Verify after a clean open over a corrupt tree: %v", err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A damaged marker forces the full rebuild, which repairs the tree.
+	if err = os.WriteFile(filepath.Join(dir, "clean"), []byte("PGCLEAN1 damaged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if db, err = Open(dir, o); err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if !db.unclean || db.Root() != root {
+		t.Fatal("damaged marker did not take the verified path")
+	}
+	if err = db.Verify(); err != nil {
+		t.Fatal(err)
+	}
+	// Verify detects state that no longer hashes to the committed root.
+	off := seg*SegSize + 5000
+	db.state[off] ^= 1
+	if err = db.Verify(); err == nil {
+		t.Fatal("Verify accepted corrupt state")
+	}
+	db.state[off] ^= 1
 }

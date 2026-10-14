@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"os"
 	"path/filepath"
 	"sync"
@@ -25,6 +26,10 @@ const (
 	nClasses  = 11 // small classes 1 KiB .. 1 MiB
 	kindLarge = 12 // region is a chain of 2 MiB segments
 	magic     = "PAGERDB2"
+
+	// The clean marker is magic [8] | version u64 | root [32] | crc32c u32.
+	cleanMagic = "PGCLEAN1"
+	cleanRec   = 52
 
 	// Header field offsets (state file, segment 0).
 	hMagic      = 0
@@ -77,7 +82,11 @@ type DB struct {
 	dir     string
 	unclean bool
 	o       Options
-	mu      sync.Mutex
+	// clean reports a valid clean-close marker naming cleanVer and cleanRoot.
+	clean     bool
+	cleanVer  uint64
+	cleanRoot [32]byte
+	mu        sync.Mutex
 	// sealMu keeps sealed epoch mappings open while readers walk them
 	// without mu. Closing an epoch takes it exclusively, after mu.
 	sealMu sync.RWMutex
@@ -264,15 +273,36 @@ func (db *DB) Close() error {
 	db.touches = db.touches[:0]
 	err := db.syncAll()
 	if err == nil {
-		err = os.WriteFile(filepath.Join(db.dir, "clean"), []byte("clean\n"), 0o644)
-		if err == nil {
-			err = syncDir(db.dir)
-		}
+		err = db.writeClean()
 	}
 	db.unmap()
 	db.closeSealed()
 	if err == nil {
 		err = db.sealErr
+	}
+	return err
+}
+
+// writeClean durably records the synced head for the next Open.
+func (db *DB) writeClean() error {
+	var mark [cleanRec]byte
+	copy(mark[:], cleanMagic)
+	le.PutUint64(mark[8:], db.version)
+	copy(mark[16:48], db.root[:])
+	le.PutUint32(mark[48:], crc32.Checksum(mark[:48], castagnoli))
+	f, err := os.OpenFile(filepath.Join(db.dir, "clean"), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(mark[:])
+	if err == nil {
+		err = f.Sync()
+	}
+	if e := f.Close(); err == nil {
+		err = e
+	}
+	if err == nil {
+		err = syncDir(db.dir)
 	}
 	return err
 }
