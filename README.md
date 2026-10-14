@@ -196,3 +196,7 @@ file. Write64 excludes Commit time.
   no lazy page faults for old-version `Map`.
 - `Proof` refuses while uncommitted writes exist (also after an `Undo` of all of them,
   until the next Commit).
+
+## License
+
+Ecosystem License v1.1, see LICENSE.md.
