@@ -2,6 +2,7 @@ package pagerdb
 
 import (
 	"crypto/sha256"
+	"errors"
 	"hash/crc32"
 	"math/bits"
 	"os"
@@ -127,6 +128,9 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	defer db.mu.Unlock()
 	if db.sealErr != nil {
 		return db.root, db.version, db.sealErr
+	}
+	if db.version == ^uint64(0) {
+		return db.root, db.version, errors.New("pagerdb: version limit reached")
 	}
 	c := db.cur
 	for _, pos := range db.touches {
