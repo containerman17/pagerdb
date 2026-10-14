@@ -2,6 +2,7 @@ package pagerdb
 
 import (
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"runtime"
@@ -15,7 +16,21 @@ import (
 // BenchmarkSustained measures the complete write and commit loop. Use
 // -benchtime=10000x for the product workload of 10000 blocks.
 func BenchmarkSustained(b *testing.B) {
-	db, err := Open(b.TempDir(), Options{MaxLeaves: 1 << 17, EpochVersions: 100, EpochBytes: 64 << 20})
+	benchmarkSustained(b, true)
+}
+
+// BenchmarkWriteCommitOnly measures the same workload without epoch rotation.
+// It excludes sealing and database cleanup from the timed interval.
+func BenchmarkWriteCommitOnly(b *testing.B) {
+	benchmarkSustained(b, false)
+}
+
+func benchmarkSustained(b *testing.B, seal bool) {
+	o := Options{MaxLeaves: 1 << 17, EpochVersions: 100, EpochBytes: 64 << 20}
+	if !seal {
+		o.EpochVersions, o.EpochBytes = math.MaxUint64, math.MaxInt64
+	}
+	db, err := Open(b.TempDir(), o)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -30,26 +45,41 @@ func BenchmarkSustained(b *testing.B) {
 	times := make([]int64, b.N)
 	var value [64]byte
 	b.ResetTimer()
+	var writeTime, commitTime time.Duration
 	start := time.Now()
 	for block := 0; block < b.N; block++ {
+		write := time.Now()
 		le.PutUint64(value[56:], uint64(block+1))
 		for leaf := 0; leaf < 2400; leaf++ {
 			db.Write(r, leaf*LeafSize, value[:])
 		}
 		commit := time.Now()
+		writeTime += commit.Sub(write)
 		if _, _, err = db.Commit(); err != nil {
 			b.Fatal(err)
 		}
-		times[block] = time.Since(commit).Nanoseconds()
+		duration := time.Since(commit)
+		commitTime += duration
+		times[block] = duration.Nanoseconds()
 	}
-	// Include completion of background sealing in the sustained throughput.
-	if err = db.Seal(); err != nil {
-		b.Fatal(err)
+	loopTime := time.Since(start)
+	var drainTime time.Duration
+	if seal {
+		// Include completion of background sealing in sustained throughput.
+		drain := time.Now()
+		if err = db.Seal(); err != nil {
+			b.Fatal(err)
+		}
+		drainTime = time.Since(drain)
 	}
 	elapsed := time.Since(start)
 	b.StopTimer()
 	slices.Sort(times)
 	b.ReportMetric(float64(b.N)/elapsed.Seconds(), "blocks/s")
+	b.ReportMetric(float64(writeTime)/float64(b.N)/1e6, "avg-write-ms")
+	b.ReportMetric(float64(commitTime)/float64(b.N)/1e6, "avg-commit-ms")
+	b.ReportMetric(float64(loopTime-writeTime-commitTime)/float64(b.N)/1e6, "avg-loop-other-ms")
+	b.ReportMetric(float64(drainTime)/1e6, "drain-ms")
 	b.ReportMetric(float64(times[(len(times)-1)*50/100])/1e6, "p50-commit-ms")
 	b.ReportMetric(float64(times[(len(times)-1)*99/100])/1e6, "p99-commit-ms")
 }
