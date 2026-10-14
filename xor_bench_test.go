@@ -169,7 +169,7 @@ func inspectXORWorkload(tb testing.TB, f *xorWorkload) {
 		f.metrics.fileBytes += uint64(s.size)
 		for i := uint64(0); i < s.nLeaves; i++ {
 			var index [idxRec]byte
-			if _, err := s.ra.ReadAt(index[:], int64(s.indexOff+i*idxRec)); err != nil {
+			if _, err := s.ra.ReadAt(index[:], int64(s.indexOff+s.nLeaves*idxKey+i*idxRec)); err != nil {
 				tb.Fatal(err)
 			}
 			leaf := uint64(le.Uint32(index[:]))

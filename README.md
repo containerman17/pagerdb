@@ -352,7 +352,8 @@ Each dense change row is 8 bytes:
 `relative version u32 | offset u16 | length u16`, in the same newest-first order.
 These uncompressed rows permit binary search before a frame is decompressed.
 
-The cumulative leaf index is sorted by leaf, with 64-byte rows:
+The cumulative leaf index is sorted by leaf. It starts with one `leaf u32` key per
+row, so lookups binary-search a dense 4-byte column, followed by 64-byte rows:
 `leaf u32 | frame count u32 | directory offset u64 | latest changed epoch u64 |
 previous changed epoch u64 | dense list offset u64 | record count u64 |
 base epoch u64 | undo charge u32 | zero u32`. The base epoch is the newest epoch at

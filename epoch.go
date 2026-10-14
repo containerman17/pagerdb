@@ -107,7 +107,8 @@ func (s *LocalStore) Latest() uint64 { return s.latest.Load() }
 
 // PGEPOCH4 stores backward XOR changes. Header fields are seven little-endian
 // u64 values after the magic: epoch, checkpoint version, end version, cumulative
-// leaf count, index offset, root count, roots offset. Index rows are 64 bytes:
+// leaf count, index offset, root count, roots offset. The index starts with one
+// u32 leaf key per row, then the rows. Index rows are 64 bytes:
 // leaf u32, frames u32, directory offset u64, latest epoch u64, previous epoch
 // u64, dense offset u64, records u64, base epoch u64, undo cost u32, zero u32.
 // Inherited rows keep only leaf, latest epoch, base epoch and undo cost.
@@ -126,6 +127,7 @@ const (
 	frameHdr   = 32
 	frameCap   = 16 << 10
 	idxRec     = 64
+	idxKey     = 4
 	// baseHopCost charges each epoch hop as this many decoded bytes.
 	baseHopCost = 256
 	denseRec    = 8
@@ -420,7 +422,7 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64, mem []byte) (*sealedEp
 		return nil, fmt.Errorf("pagerdb: epoch %d: bad header", epoch)
 	}
 	s := &sealedEpoch{epoch: epoch, start: le.Uint64(h[16:]), end: le.Uint64(h[24:]), ra: ra, mem: mem, size: size, nLeaves: le.Uint64(h[32:]), indexOff: le.Uint64(h[40:]), nRoots: le.Uint64(h[48:]), rootsOff: le.Uint64(h[56:])}
-	if size < epochHdr || s.start > s.end || s.end-s.start > uint64(^uint32(0)) || s.nRoots != s.end-s.start+1 || s.indexOff < epochHdr || s.indexOff > uint64(size) || s.nLeaves > (uint64(size)-s.indexOff)/idxRec || s.rootsOff != s.indexOff+s.nLeaves*idxRec || s.rootsOff > uint64(size) || s.nRoots > (uint64(size)-s.rootsOff)/rootRec || s.rootsOff+s.nRoots*rootRec != uint64(size) {
+	if size < epochHdr || s.start > s.end || s.end-s.start > uint64(^uint32(0)) || s.nRoots != s.end-s.start+1 || s.indexOff < epochHdr || s.indexOff > uint64(size) || s.nLeaves > (uint64(size)-s.indexOff)/(idxKey+idxRec) || s.rootsOff != s.indexOff+s.nLeaves*(idxKey+idxRec) || s.rootsOff > uint64(size) || s.nRoots > (uint64(size)-s.rootsOff)/rootRec || s.rootsOff+s.nRoots*rootRec != uint64(size) {
 		return nil, fmt.Errorf("pagerdb: epoch %d: invalid bounds", epoch)
 	}
 	var prevLeaf uint32
@@ -429,9 +431,13 @@ func parseEpoch(ra io.ReaderAt, size int64, epoch uint64, mem []byte) (*sealedEp
 		if e != nil {
 			return nil, e
 		}
+		key, e := s.indexKey(i)
+		if e != nil {
+			return nil, e
+		}
 		leaf, frames, dir, last, prior, dense, n := le.Uint32(r[:]), le.Uint32(r[4:]), le.Uint64(r[8:]), le.Uint64(r[16:]), le.Uint64(r[24:]), le.Uint64(r[32:]), le.Uint64(r[40:])
 		base, cost := le.Uint64(r[48:]), le.Uint32(r[56:])
-		if i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || base > last || cost >= frameCap || base == last && cost != 0 || le.Uint32(r[60:]) != 0 || frames == 0 && (dir != 0 || last == epoch || prior != 0 || dense != 0 || n != 0) || frames > 0 && (last != epoch || prior >= epoch || n == 0 || dir < epochHdr || dir > s.indexOff || uint64(frames) > (s.indexOff-dir)/frameDirRec || dense < epochHdr || dense > s.indexOff || n > (s.indexOff-dense)/denseRec) {
+		if key != leaf || i > 0 && leaf <= prevLeaf || last == 0 || last > epoch || base > last || cost >= frameCap || base == last && cost != 0 || le.Uint32(r[60:]) != 0 || frames == 0 && (dir != 0 || last == epoch || prior != 0 || dense != 0 || n != 0) || frames > 0 && (last != epoch || prior >= epoch || n == 0 || dir < epochHdr || dir > s.indexOff || uint64(frames) > (s.indexOff-dir)/frameDirRec || dense < epochHdr || dense > s.indexOff || n > (s.indexOff-dense)/denseRec) {
 			return nil, fmt.Errorf("pagerdb: epoch %d: invalid cumulative index", epoch)
 		}
 		prevLeaf = leaf
@@ -529,30 +535,45 @@ func (s *sealedEpoch) indexRecord(i uint64) ([idxRec]byte, error) {
 	if i >= s.nLeaves {
 		return r, fmt.Errorf("pagerdb: epoch index out of bounds")
 	}
-	err := s.readSmall(s.indexOff+i*idxRec, r[:])
+	err := s.readSmall(s.indexOff+s.nLeaves*idxKey+i*idxRec, r[:])
 	return r, err
 }
 
+// indexKey reads the leaf of row i from the dense key column, so a lookup's
+// binary search touches 4 bytes per probe instead of a whole row.
+func (s *sealedEpoch) indexKey(i uint64) (uint32, error) {
+	at := s.indexOff + i*idxKey
+	if s.mem != nil {
+		return le.Uint32(s.mem[at:]), nil
+	}
+	var k [idxKey]byte
+	err := s.readSmall(at, k[:])
+	return le.Uint32(k[:]), err
+}
+
 func (s *sealedEpoch) lookup(leaf uint64) ([idxRec]byte, bool, error) {
+	var r [idxRec]byte
 	lo, hi := uint64(0), s.nLeaves
 	for lo < hi {
 		m := lo + (hi-lo)/2
-		r, e := s.indexRecord(m)
+		k, e := s.indexKey(m)
 		if e != nil {
 			return r, false, e
 		}
-		if uint64(le.Uint32(r[:])) < leaf {
+		if uint64(k) < leaf {
 			lo = m + 1
 		} else {
 			hi = m
 		}
 	}
-	var r [idxRec]byte
 	if lo == s.nLeaves {
 		return r, false, nil
 	}
+	if k, e := s.indexKey(lo); e != nil || uint64(k) != leaf {
+		return r, false, e
+	}
 	r, e := s.indexRecord(lo)
-	return r, uint64(le.Uint32(r[:])) == leaf, e
+	return r, e == nil, e
 }
 
 // loadSealed opens every sealed epoch of the store.

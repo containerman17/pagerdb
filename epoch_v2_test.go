@@ -277,17 +277,19 @@ func epochIndexSeed() []byte {
 	frame := xorFrameSeed()
 	dirOff := epochHdr + len(frame)
 	denseOff := dirOff + frameDirRec
-	idxOff := denseOff + denseRec
+	keyOff := denseOff + denseRec
+	idxOff := keyOff + idxKey
 	rootsOff := idxOff + idxRec
 	image := make([]byte, rootsOff+2*rootRec)
 	copy(image, epochMagic)
-	for i, v := range []uint64{1, 0, 1, 1, uint64(idxOff), 2, uint64(rootsOff)} {
+	for i, v := range []uint64{1, 0, 1, 1, uint64(keyOff), 2, uint64(rootsOff)} {
 		le.PutUint64(image[8+i*8:], v)
 	}
 	copy(image[epochHdr:], frame)
 	le.PutUint64(image[dirOff:], epochHdr)
 	le.PutUint32(image[dirOff+16:], 1)
 	copy(image[denseOff:], frame[frameHdr:frameHdr+denseRec])
+	le.PutUint32(image[keyOff:], 7)
 	le.PutUint32(image[idxOff:], 7)
 	le.PutUint32(image[idxOff+4:], 1)
 	le.PutUint64(image[idxOff+8:], uint64(dirOff))
@@ -317,10 +319,10 @@ func TestXORDenseIndexValidation(t *testing.T) {
 	if _, e := parseEpoch(bytes.NewReader(valid), int64(len(valid)), 1, nil); e != nil {
 		t.Fatal(e)
 	}
-	idx := int(le.Uint64(valid[40:]))
+	idx := int(le.Uint64(valid[40:])) + idxKey
 	dense := int(le.Uint64(valid[idx+32:]))
 	dir := int(le.Uint64(valid[idx+8:]))
-	for _, at := range []int{dense, dense + 5, dense + 7, dir + 8, dir + 16, dir + 20, idx + 24, idx + 32, idx + 40} {
+	for _, at := range []int{dense, dense + 5, dense + 7, dir + 8, dir + 16, dir + 20, idx - idxKey, idx + 24, idx + 32, idx + 40, idx + 48, idx + 59, idx + 60} {
 		b := append([]byte(nil), valid...)
 		b[at] = 255
 		if _, e := parseEpoch(bytes.NewReader(b), int64(len(b)), 1, b); e == nil {

@@ -527,6 +527,18 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 	}
 	indexOff := position
 	var row [idxRec]byte
+	for _, s := range sections {
+		sectionReader = *io.NewSectionReader(s.file, int64(s.indexOff), int64(s.leaves*idxRec))
+		reader.Reset(&sectionReader)
+		for j := uint64(0); j < s.leaves; j++ {
+			if _, err = io.ReadFull(reader, row[:]); err != nil {
+				return nil, err
+			}
+			if _, err = ow.Write(row[:idxKey]); err != nil {
+				return nil, err
+			}
+		}
+	}
 	for i, s := range sections {
 		sectionReader = *io.NewSectionReader(s.file, int64(s.indexOff), int64(s.leaves*idxRec))
 		reader.Reset(&sectionReader)
@@ -543,7 +555,7 @@ func (db *DB) parallelSeal(dir string, c *chunk, end, nRoots, minLeaf, maxLeaf u
 			}
 		}
 	}
-	rootsOff := indexOff + nLeaves*idxRec
+	rootsOff := indexOff + nLeaves*(idxKey+idxRec)
 	if _, err = io.Copy(ow, sortedRoots); err != nil {
 		return nil, err
 	}
