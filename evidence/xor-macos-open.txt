@@ -1,0 +1,12 @@
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkOpenVerified/NoSync-8         	       3	  21685445 ns/op	 386.83 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/NoSync-8         	       3	  24298236 ns/op	 345.24 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/NoSync-8         	       3	  20650361 ns/op	 406.22 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-8           	       3	  63549139 ns/op	 132.00 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-8           	       3	  56421070 ns/op	 148.68 MB/s	         4.000 data-MiB	   8388608 state-B
+BenchmarkOpenVerified/Sync-8           	       3	  59435181 ns/op	 141.14 MB/s	         4.000 data-MiB	   8388608 state-B
+PASS
+ok  	github.com/containerman17/pagerdb	2.947s

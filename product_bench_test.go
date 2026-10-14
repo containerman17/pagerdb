@@ -228,3 +228,69 @@ func TestViewMapSparseRSS(t *testing.T) {
 		t.Fatal("sparse view used more than 256 MiB extra RSS")
 	}
 }
+
+// BenchmarkOpenVerified times Open on an existing, cleanly closed database.
+// The payload is 4 MiB of nonzero bytes. state-B reports all allocated state
+// bytes, including allocation metadata; MB/s uses that state byte count.
+// Setup, root checks, and Close are outside the measured interval.
+func BenchmarkOpenVerified(b *testing.B) {
+	for _, syncMode := range []bool{false, true} {
+		name := "NoSync"
+		if syncMode {
+			name = "Sync"
+		}
+		b.Run(name, func(b *testing.B) {
+			dir := b.TempDir()
+			options := Options{MaxLeaves: 1 << 14, Sync: syncMode}
+			db, err := Open(dir, options)
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(func() {
+				if db != nil {
+					db.Close()
+				}
+			})
+			const payloadBytes = 4 << 20
+			r, err := db.Alloc(payloadBytes)
+			if err != nil {
+				b.Fatal(err)
+			}
+			payload := make([]byte, payloadBytes)
+			for i := range payload {
+				payload[i] = 0x6d
+			}
+			db.Write(r, 0, payload)
+			root, version, err := db.Commit()
+			if err != nil {
+				b.Fatal(err)
+			}
+			allocated := db.hdr(hNextSeg) * SegSize
+			if err = db.Close(); err != nil {
+				b.Fatal(err)
+			}
+			db = nil
+			b.SetBytes(int64(allocated))
+			b.StopTimer()
+			b.ResetTimer()
+			for range b.N {
+				b.StartTimer()
+				db, err = Open(dir, options)
+				b.StopTimer()
+				if err != nil {
+					b.Fatal(err)
+				}
+				if db.root != root || db.version != version {
+					b.Fatal("Open did not preserve the committed root and version")
+				}
+				err = db.Close()
+				db = nil
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+			b.ReportMetric(float64(payloadBytes)/(1<<20), "data-MiB")
+			b.ReportMetric(float64(allocated), "state-B")
+		})
+	}
+}
