@@ -484,8 +484,8 @@ func BenchmarkWindowIndexMemory(b *testing.B) {
 				runtime.GC()
 				runtime.ReadMemStats(&after)
 				heap := float64(after.HeapAlloc - before.HeapAlloc)
-				b.ReportMetric(float64(len(db.entries))/writes, "retained-blocks")
-				b.ReportMetric(heap/float64(len(db.entries)), "heap-B/retained-write")
+				b.ReportMetric(float64(db.entries.len())/writes, "retained-blocks")
+				b.ReportMetric(heap/float64(db.entries.len()), "heap-B/retained-write")
 				b.ReportMetric(heap/1e6, "heap-MB")
 				if err = db.Close(); err != nil {
 					b.Fatal(err)

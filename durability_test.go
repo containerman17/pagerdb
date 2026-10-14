@@ -280,18 +280,18 @@ func TestRecoveryInterruptedRewind(t *testing.T) {
 				t.Fatal(err)
 			}
 			if stage == "partial state" {
-				m, off, n := db.rec(&db.entries[len(db.entries)-1])
+				m, off, n := db.rec(db.entries.at(db.entries.end - 1))
 				copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
 				if err = db.syncState(); err != nil {
 					t.Fatal(err)
 				}
 			}
 			if stage == "removed log" {
-				for i := len(db.entries) - 1; i >= 0; i-- {
-					if db.entries[i].ver <= 3 {
+				for i := db.entries.end - 1; i >= db.entries.base; i-- {
+					if db.entries.at(i).ver <= 3 {
 						break
 					}
-					m, off, n := db.rec(&db.entries[i])
+					m, off, n := db.rec(db.entries.at(i))
 					copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
 				}
 				if err = db.syncState(); err != nil {
@@ -694,5 +694,69 @@ func TestLogTrimWaitsForDurableState(t *testing.T) {
 		if i > 21 && n > 3 {
 			t.Fatalf("block %d: %d chunks kept", i, n)
 		}
+	}
+}
+
+// TestLogOutgrowsReservedMapping writes one block larger than the log mapping
+// reserved for an epoch, so the chunk is remapped mid-block, then checks the
+// block after a clean and an unclean reopen.
+func TestLogOutgrowsReservedMapping(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{EpochBytes: 1 << 20}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const size = 40 << 20
+	r, err := db.Alloc(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	mapped := len(db.cur.m)
+	buf := make([]byte, 1<<20)
+	for off := 0; off < size; off += len(buf) {
+		buf[0] = byte(off >> 20)
+		db.Write(r, off, buf)
+	}
+	if len(db.cur.m) <= mapped {
+		t.Fatalf("log mapping stayed at %d bytes", mapped)
+	}
+	root, _, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(db *DB) {
+		t.Helper()
+		if db.Root() != root {
+			t.Fatal("root changed across reopen")
+		}
+		var b [1]byte
+		for off := 0; off < size; off += 1 << 20 {
+			db.Read(r, off, 1, b[:])
+			if b[0] != byte(off>>20) {
+				t.Fatalf("offset %d holds %d", off, b[0])
+			}
+		}
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(db)
+	db.Write(r, 0, []byte{99})
+	crash(db) // with a pending write
+	db, err = Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(db)
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

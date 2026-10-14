@@ -48,6 +48,7 @@ func (db *DB) setRegion(r Region, kind, n uint32, where uint64) {
 	le.PutUint64(b[:], uint64(kind)|uint64(n)<<32)
 	le.PutUint64(b[8:], where)
 	db.put(0, db.regionOff(r), b[:])
+	db.lastR = 0
 }
 
 // loc is where a region lives: one file range (small class) or a list of segments.
@@ -81,6 +82,20 @@ func locate(rd func(off uint64) uint64, regTab, maxRegions uint64, r Region) (lo
 	return loc{}, ErrRegion
 }
 
+// flat returns the file offset of [off, off+n) when it is one nonempty
+// contiguous range inside the region, so callers can skip each's closure.
+func (l loc) flat(off, n uint64) (uint64, bool) {
+	switch {
+	case n == 0 || off+n > l.size || off+n < off:
+		return 0, false
+	case l.segs == nil:
+		return l.off + off, true
+	case off%SegSize+n <= SegSize:
+		return l.segs[off/SegSize]*SegSize + off%SegSize, true
+	}
+	return 0, false
+}
+
 // each calls f for every contiguous file range of [off, off+n) in the region.
 func (l loc) each(off, n uint64, f func(fileOff, pos, n uint64)) {
 	if off+n > l.size || off+n < off {
@@ -105,6 +120,9 @@ func (db *DB) headU64(off uint64) uint64 { return le.Uint64(db.state[off:]) }
 
 // loc resolves a region at head, caching segment chains.
 func (db *DB) loc(r Region) loc {
+	if r == db.lastR && r != 0 {
+		return db.lastLoc
+	}
 	if segs, ok := db.segCache[r]; ok {
 		return loc{size: uint64(len(segs)) * SegSize, segs: segs}
 	}
@@ -115,10 +133,14 @@ func (db *DB) loc(r Region) loc {
 	if l.segs != nil {
 		db.segCache[r] = l.segs
 	}
+	db.lastR, db.lastLoc = r, l
 	return l
 }
 
 func (db *DB) forget(r Region) {
+	if r == db.lastR {
+		db.lastR = 0
+	}
 	delete(db.segCache, r)
 	if m, ok := db.maps[r]; ok {
 		unix.Munmap(m)
@@ -390,7 +412,12 @@ func (db *DB) Map(r Region) ([]byte, error) {
 
 // Read copies n head bytes at off into buf, including uncommitted writes.
 func (db *DB) Read(r Region, off, n int, buf []byte) {
-	db.loc(r).each(uint64(off), uint64(n), func(fo, pos, k uint64) {
+	l := db.loc(r)
+	if fo, ok := l.flat(uint64(off), uint64(n)); ok {
+		copy(buf[:n], db.state[fo:fo+uint64(n)])
+		return
+	}
+	l.each(uint64(off), uint64(n), func(fo, pos, k uint64) {
 		copy(buf[pos:pos+k], db.state[fo:fo+k])
 	})
 }

@@ -111,8 +111,8 @@ func (vw *View) snapshotView(l loc) (*os.File, error) {
 	}
 	db := vw.db
 	db.mu.Lock()
-	for i := range db.entries {
-		if e := &db.entries[i]; e.ver > vw.v {
+	for i := db.entries.base; i < db.entries.end; i++ {
+		if e := db.entries.at(i); e.ver > vw.v {
 			_, off, n := db.rec(e)
 			for leaf := off / LeafSize; leaf <= (off+n-1)/LeafSize; leaf++ {
 				addChanged(leaf)

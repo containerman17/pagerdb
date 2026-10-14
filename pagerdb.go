@@ -105,6 +105,8 @@ type DB struct {
 	dirty    []uint32 // leaves written since the last Commit
 	dirtyBit []uint64
 	segCache map[Region][]uint64
+	lastR    Region // one-entry loc cache for the owner's hot region, 0 = empty
+	lastLoc  loc
 	maps     map[Region][]byte // contiguous mappings of large regions
 
 	logState
@@ -234,6 +236,7 @@ func (db *DB) growState(segs uint64) error {
 }
 
 func (db *DB) unmap() {
+	db.stopPrefaulter()
 	for r, m := range db.maps {
 		unix.Munmap(m)
 		delete(db.maps, r)

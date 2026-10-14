@@ -30,9 +30,7 @@ func TestRetentionStoragePinAndRewind(t *testing.T) {
 	if db.sealErr != nil {
 		t.Fatal(db.sealErr)
 	}
-	// Retain the backing storage to check that pruning releases chunk pointers.
-	oldEntries := db.entries
-	oldBase := db.entryBase
+	oldBase := db.entries.base
 	if db.chunks[0].start != 0 {
 		t.Fatal("open view did not pin its log")
 	}
@@ -41,12 +39,8 @@ func TestRetentionStoragePinAndRewind(t *testing.T) {
 		t.Fatalf("pinned read: %v %v", value, err)
 	}
 	pinned.Close()
-	removed := int(db.entryBase - oldBase)
-	if removed == 0 {
+	if db.entries.base == oldBase {
 		t.Fatal("closing pin did not prune retained history")
-	}
-	if len(db.entries) > 0 && &db.entries[0] != &oldEntries[removed] {
-		t.Fatal("pruning copied retained entries")
 	}
 	if err = db.Rewind(9); err != nil {
 		t.Fatal(err)
@@ -96,8 +90,8 @@ func TestIndexFollowsRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(db.entries) != 4*4 {
-		t.Fatalf("index holds %d entries, want %d", len(db.entries), 4*4)
+	if db.entries.len() != 4*4 {
+		t.Fatalf("index holds %d entries, want %d", db.entries.len(), 4*4)
 	}
 	check := func(vw *View, v int) {
 		b := make([]byte, 1)
@@ -122,4 +116,37 @@ func TestIndexFollowsRetention(t *testing.T) {
 	}
 	defer vw.Close()
 	check(vw, 10)
+}
+
+func TestSeqBufPages(t *testing.T) {
+	var b seqBuf[int64]
+	const page = 1 << seqPageBits
+	next := int64(0)
+	for round := range 6 {
+		for range page/2 + 17 {
+			b.push(next * 3)
+			next++
+		}
+		if round%2 == 1 {
+			b.end -= 5 // undo pops from the back, then pushes reuse the space
+			next -= 5
+		}
+		b.cut(b.end - page/3)
+		for s := b.base; s < b.end; s++ {
+			if *b.at(s) != s*3 {
+				t.Fatalf("round %d: seq %d holds %d", round, s, *b.at(s))
+			}
+		}
+		if n := int64(len(b.pages)); n > b.len()/page+2 {
+			t.Fatalf("round %d: %d pages for %d live values", round, n, b.len())
+		}
+	}
+	b.cut(b.end)
+	if len(b.pages) > 1 {
+		t.Fatalf("%d pages left after cutting everything", len(b.pages))
+	}
+	b.push(next * 3)
+	if *b.at(next) != next*3 {
+		t.Fatal("push after cutting everything")
+	}
 }

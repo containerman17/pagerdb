@@ -363,7 +363,7 @@ func (db *DB) seal(c *chunk) error {
 			return err
 		}
 	}
-	if err = c.f.Truncate(c.tail); err != nil {
+	if err = c.setSize(c.tail); err != nil {
 		sealed.close()
 		return err
 	}
@@ -383,14 +383,14 @@ func (db *DB) readWindowRange(version, leaf, offset uint64, out []byte) {
 	off := leaf*LeafSize + offset
 	end := off + uint64(len(out))
 	p, ok := db.heads.get(uint32(leaf))
-	if !ok || p < db.pieceBase || db.entries[db.pieceEntry(db.pieces[p-db.pieceBase])-db.entryBase].ver <= version {
+	if !ok || p < db.pieces.base || db.entries.at(db.pieceEntry(*db.pieces.at(p))).ver <= version {
 		copy(out, db.state[off:end])
 		return
 	}
 	var covered [LeafSize / 64]uint64 // bit i: out[i] came from an undo image
-	for ok && p >= db.pieceBase {
-		pc := db.pieces[p-db.pieceBase]
-		e := &db.entries[db.pieceEntry(pc)-db.entryBase]
+	for ok && p >= db.pieces.base {
+		pc := *db.pieces.at(p)
+		e := db.entries.at(db.pieceEntry(pc))
 		if e.ver <= version {
 			break
 		}

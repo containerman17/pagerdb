@@ -49,28 +49,29 @@ func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
 
 func (db *DB) undoEntries(pos, seq int64, cut bool) {
 	for i := db.seq() - 1; i >= seq; i-- {
-		m, off, n := db.rec(&db.entries[i-db.entryBase])
+		m, off, n := db.rec(db.entries.at(i))
 		copy(db.state[off:off+n], m[entryHdr:entryHdr+n])
 		db.markDirty(off, n)
 		if cut {
 			m[0] = 0
 		}
-		for len(db.pieces) > 0 && db.pieceEntry(db.pieces[len(db.pieces)-1]) >= i {
-			p, pc := db.pieceSeq()-1, db.pieces[len(db.pieces)-1]
+		for db.pieces.len() > 0 && db.pieceEntry(*db.pieces.at(db.pieces.end - 1)) >= i {
+			p, pc := db.pieces.end-1, *db.pieces.at(db.pieces.end - 1)
 			if prev, ok := db.prevPiece(p, pc); ok {
 				db.heads.set(pc.leaf, prev)
 			} else {
 				db.heads.del(pc.leaf)
 			}
-			db.pieces = db.pieces[:len(db.pieces)-1]
+			db.pieces.end--
 		}
-		db.entries = db.entries[:i-db.entryBase]
+		db.entries.end = i
 	}
 	if cut {
 		clear(db.cur.m[pos:db.cur.tail])
 	}
 	db.cur.tail = pos
 	clear(db.segCache)
+	db.lastR = 0
 	for r, m := range db.maps {
 		if l, err := locate(db.headU64, db.regTab, db.maxRegions, r); err != nil || !slices.Equal(l.segs, db.loc(r).segs) || len(m) != int(l.size) {
 			db.forget(r)
@@ -149,7 +150,7 @@ func openChunk(path string, epoch uint64) (*chunk, error) {
 		f.Close()
 		return nil, err
 	}
-	return &chunk{epoch: epoch, f: f, m: m}, nil
+	return &chunk{epoch: epoch, f: f, m: m, size: fi.Size()}, nil
 }
 
 // open recovers the store. After an unclean shutdown every kept chunk is replayed oldest
@@ -346,8 +347,8 @@ func (db *DB) replay(c *chunk) error {
 		}
 	}
 	need := uint64(0)
-	for i := range db.entries {
-		_, off, n := db.rec(&db.entries[i])
+	for i := db.entries.base; i < db.entries.end; i++ {
+		_, off, n := db.rec(db.entries.at(i))
 		if off > db.maxLeaves*LeafSize || n > db.maxLeaves*LeafSize-off {
 			return fmt.Errorf("pagerdb: recovery: log state offset out of bounds")
 		}
@@ -382,8 +383,8 @@ func (db *DB) replay(c *chunk) error {
 	}
 	// The state file is synced at least as far as the oldest kept checkpoint,
 	// so redoing every kept chunk in order reaches the last complete block.
-	for i := range db.entries {
-		m, off, n := db.rec(&db.entries[i])
+	for i := db.entries.base; i < db.entries.end; i++ {
+		m, off, n := db.rec(db.entries.at(i))
 		copy(db.state[off:off+n], m[entryHdr+n:])
 	}
 	for _, b := range bl {
@@ -450,7 +451,7 @@ func (db *DB) Rewind(v uint64) error {
 	db.cur = b.c
 	db.cur.sealed = false
 	seq := db.seq()
-	for seq > db.entryBase && db.entries[seq-1-db.entryBase].ver > v {
+	for seq > db.entries.base && db.entries.at(seq-1).ver > v {
 		seq--
 	}
 	db.undoEntries(b.end, seq, false)
@@ -470,7 +471,7 @@ func (db *DB) Rewind(v uint64) error {
 		db.sealMu.Unlock()
 		db.sealed = db.sealed[:len(db.sealed)-1]
 	}
-	if err := db.cur.f.Truncate(int64(len(db.cur.m))); err != nil {
+	if err := db.cur.setSize(int64(len(db.cur.m))); err != nil {
 		return err
 	}
 	for len(db.chunks) > 0 && db.chunks[len(db.chunks)-1] != db.cur {

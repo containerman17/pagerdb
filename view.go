@@ -194,12 +194,10 @@ func (db *DB) cutIndex(k int) {
 	if k == 0 {
 		return
 	}
-	first := db.entryBase + int64(k)
-	pb := db.pieceBase + int64(sort.Search(len(db.pieces), func(j int) bool { return db.pieceEntry(db.pieces[j]) >= first }))
-	db.pieces = db.pieces[pb-db.pieceBase:]
-	db.pieceBase = pb
-	db.entries = db.entries[k:]
-	db.entryBase = first
+	first := db.entries.base + int64(k)
+	pb := db.pieces.base + int64(sort.Search(int(db.pieces.len()), func(j int) bool { return db.pieceEntry(*db.pieces.at(db.pieces.base + int64(j))) >= first }))
+	db.pieces.cut(pb)
+	db.entries.cut(first)
 }
 
 // pruneIndex frees index entries of versions no rewind, open view or window
@@ -223,7 +221,7 @@ func (db *DB) pruneIndex() {
 	if p <= db.windowStart {
 		return
 	}
-	db.cutIndex(sort.Search(len(db.entries), func(j int) bool { return db.entries[j].ver > p }))
+	db.cutIndex(sort.Search(int(db.entries.len()), func(j int) bool { return db.entries.at(db.entries.base+int64(j)).ver > p }))
 	db.windowStart = p
 }
 
@@ -240,7 +238,7 @@ func (db *DB) dropChunks() (dropped []*chunk) {
 			}
 		}
 		k := 0
-		for k < len(db.entries) && db.entries[k].epoch() == uint32(c.epoch)&(1<<24-1) {
+		for int64(k) < db.entries.len() && db.entries.at(db.entries.base+int64(k)).epoch() == uint32(c.epoch)&(1<<24-1) {
 			k++
 		}
 		db.cutIndex(k)
