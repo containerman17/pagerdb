@@ -59,8 +59,9 @@ type Region uint32
 type Options struct {
 	// MaxLeaves sets the leaf capacity at creation; it must be a power of two.
 	MaxLeaves uint64 // tree capacity in 1 KiB leaves, power of two, fixed at creation
-	// Sync makes undo records durable before state mutation and syncs every commit.
-	Sync bool // sync undo records before mutation and sync every Commit
+	// Sync makes every Commit durable with one log barrier. Writes are staged
+	// until that barrier, so state never holds a change without durable undo.
+	Sync bool
 	// RetainVersions sets rewind retention; zero selects 4096 versions.
 	RetainVersions uint64 // versions available for Rewind (default 4096)
 	// EpochVersions sets the epoch version limit; zero selects 10000.
@@ -286,7 +287,9 @@ func (db *DB) syncAll() error {
 	if err := db.syncState(); err != nil {
 		return err
 	}
-	if err := unix.Msync(db.cur.m[:db.cur.tail], unix.MS_SYNC); err != nil {
+	// The whole mapping: bytes past the tail that an undo or recovery cleared
+	// must not survive on disk as a parseable torn tail.
+	if err := unix.Msync(db.cur.m, unix.MS_SYNC); err != nil {
 		return err
 	}
 	return db.cur.f.Sync()

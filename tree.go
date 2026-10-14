@@ -5,12 +5,9 @@ import (
 	"errors"
 	"hash/crc32"
 	"math/bits"
-	"os"
 	"runtime"
 	"slices"
 	"sync"
-
-	"golang.org/x/sys/unix"
 )
 
 func sha256Sum(b []byte) [32]byte { return sha256.Sum256(b) }
@@ -180,9 +177,16 @@ func (db *DB) hashDirty() [32]byte {
 	db.dirty = db.dirty[:0]
 	leafT := tileTables[db.depth][db.depth]
 	parallel(len(idx), func(lo, hi int) {
+		var staged [LeafSize]byte
 		for _, i := range idx[lo:hi] {
 			off := (i - db.maxLeaves) * LeafSize
-			h := sha256.Sum256(db.state[off : off+LeafSize])
+			data := db.state[off : off+LeafSize]
+			if s := db.stage[uint32(i-db.maxLeaves)]; s != nil {
+				copy(staged[:], data)
+				s.overlay(staged[:], 0)
+				data = staged[:]
+			}
+			h := sha256.Sum256(data)
 			copy(db.tree[leafT.base+(i>>leafT.shift)*4096+(i&leafT.mask)*32:], h[:])
 		}
 	})
@@ -219,7 +223,7 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	c := db.cur
 	for _, pos := range db.touches {
 		n, fo := int64(le.Uint32(c.m[pos+8:])), le.Uint64(c.m[pos+24:])
-		copy(c.m[pos+entryHdr+n:pos+entryHdr+2*n], db.state[fo:])
+		db.readHead(fo, c.m[pos+entryHdr+n:pos+entryHdr+2*n])
 	}
 	db.touches = db.touches[:0]
 	root := db.hashDirty()
@@ -230,12 +234,10 @@ func (db *DB) Commit() ([32]byte, uint64, error) {
 	copy(r[16:48], root[:])
 	le.PutUint32(r[48:], crc32.Update(crc32.Checksum(c.m[db.blockStart:pos], castagnoli), castagnoli, r[4:48]))
 	r[0] = 'B'
+	// One barrier per block: entries and the block record become durable
+	// together, then staged bytes reach the state mapping.
 	if db.o.Sync {
-		from := db.blockStart / int64(os.Getpagesize()) * int64(os.Getpagesize())
-		if err := unix.Msync(c.m[from:c.tail], unix.MS_SYNC); err != nil {
-			return db.root, db.version, err
-		}
-		if err := c.f.Sync(); err != nil {
+		if err := db.syncPending(); err != nil {
 			return db.root, db.version, err
 		}
 	}

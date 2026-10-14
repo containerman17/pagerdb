@@ -134,9 +134,19 @@ Both use bounded buffers, independent of image size.
 ## Durability and ownership
 
 `Sync: true` makes undo records durable before any corresponding shared state byte
-can change. This applies to Write, allocator writes, and Touch. Commit makes the
-complete record and new bytes durable in the log before returning. Recovery replays
-complete commits and undoes unfinished writes. State/tree checkpoints and directory
+can change, with one log barrier (msync and fsync) per block. Write and allocator
+writes stage their new bytes in memory instead of the shared state mapping. Read,
+Views, allocation and hashing see staged bytes through an overlay. Commit writes the
+block record, makes the whole block durable with one barrier, then applies the
+staged bytes to the mapping. Touch logs old bytes and makes the log durable (one
+barrier) before returning, and applies staged writes first, because the caller then
+writes the mapping directly. DB.Map applies staged writes the same way. A DB.Map
+slice therefore shows Write bytes from the next Commit, Touch or Map call on; until
+then use Read. Undo drops staged bytes without touching the mapping. Any state page
+can reach disk at any time, but it never holds a byte whose undo record is not
+durable. Log bytes that an undo clears are included in the next barrier, so undone
+entries cannot reappear as a torn tail. Recovery replays complete commits and undoes
+unfinished writes. State/tree checkpoints and directory
 changes are synced before old recovery data can be discarded. Under the operating
 system's filesystem sync guarantees, acknowledged commits survive power loss.
 A committed record that reached storage immediately before a crash can also recover
@@ -196,7 +206,7 @@ Options are `MaxLeaves`, `Sync`, `RetainVersions`, `EpochVersions`, `EpochBytes`
 Head range violations panic like slice bounds violations. Proof rejects pending
 dirty state. DB.Map slices are invalidated by Free/Grow or allocation rollback.
 View.Map snapshots remain valid until View.Close. Mutation methods without an error
-return can panic on storage failures, including log growth and Sync undo barriers.
+return can panic on storage failures, including log growth and Touch barriers in Sync mode.
 Undo can also panic if restoring durable state fails. Commit can advance the
 version and then return a rotation or sealing error; inspect its returned version.
 Import requires a destination that does not exist and is not created concurrently.
@@ -294,7 +304,7 @@ CRC-32C uses the Castagnoli polynomial. The entry undo checksum covers bytes
 4..11, 16..31, and the old bytes. The commit checksum covers all complete entry
 bytes since the preceding checkpoint or commit, then commit bytes 4..47. A chunk starts with one checkpoint. Unused tail
 bytes are zero. A tag alone is not a durability barrier; Sync performs explicit
-log synchronization before shared state changes.
+log synchronization before staged bytes reach the shared state mapping.
 
 `rewind` is a 32-byte durable intent: `PGREWND2 [8] | target version u64 |
 target epoch u64 | target log end u64`. The log end is immediately after the target
@@ -539,7 +549,7 @@ UNVERIFIED. CI is configured but was not published or run remotely.
 - Version 1 files require migration; they are not opened as version 2.
 - Rewind is limited by configured retention. Sealed history remains available for reads.
 - Cumulative sealed indexes trade extra disk space for logarithmic lookup per changed epoch.
-- Sync performs durability barriers per write, including Touch, so small writes cost more.
+- Sync costs one barrier per Commit, plus one per Touch call and per DB.Map call with staged writes. On macOS the barrier uses F_FULLFSYNC.
 - Open verifies the whole allocated state. Large stores therefore have proportional recovery cost.
 - Without filesystem cloning, private mapping setup copies sparse file extents.
 - Linux userfaultfd needs cgo and a native fault thread. Map setup reconstructs changed historical leaves into a snapshot file. A Go fault handler cannot safely serve arbitrary Go slice access during garbage collection.

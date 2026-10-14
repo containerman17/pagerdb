@@ -48,16 +48,19 @@ func (db *DB) undo(m Mark) {
 func (db *DB) undoTo(pos, seq int64) { db.undoEntries(pos, seq, true) }
 
 func (db *DB) undoEntries(pos, seq int64, cut bool) {
+	staged := len(db.stage) > 0
 	for i := db.seq() - 1; i >= seq; i-- {
 		e := db.entries[i-db.entryBase]
-		old := e.c.m[e.pos+entryHdr : e.pos+entryHdr+int64(e.n)]
-		copy(db.state[e.off:e.off+uint64(e.n)], old)
 		db.markDirty(e.off, uint64(e.n))
-		if db.o.Sync && cut {
-			page := uint64(os.Getpagesize())
-			from := e.off / page * page
-			if err := unix.Msync(db.state[from:e.off+uint64(e.n)], unix.MS_SYNC); err != nil {
-				panic(fmt.Sprintf("pagerdb: sync undo: %v", err))
+		// A staged entry never reached the state mapping.
+		if !staged || i < db.appliedSeq {
+			copy(db.state[e.off:e.off+uint64(e.n)], e.c.m[e.pos+entryHdr:e.pos+entryHdr+int64(e.n)])
+			if db.o.Sync && cut {
+				page := uint64(os.Getpagesize())
+				from := e.off / page * page
+				if err := unix.Msync(db.state[from:e.off+uint64(e.n)], unix.MS_SYNC); err != nil {
+					panic(fmt.Sprintf("pagerdb: sync undo: %v", err))
+				}
 			}
 		}
 		if cut {
@@ -75,8 +78,12 @@ func (db *DB) undoEntries(pos, seq int64, cut bool) {
 		clear(db.entries[i-db.entryBase:])
 		db.entries = db.entries[:i-db.entryBase]
 	}
+	if staged {
+		db.restage()
+	}
 	if cut {
 		clear(db.cur.m[pos:db.cur.tail])
+		db.logHigh = max(db.logHigh, db.cur.tail)
 	}
 	db.cur.tail = pos
 	clear(db.segCache)
@@ -416,7 +423,7 @@ func (db *DB) Rewind(v uint64) error {
 	if err := db.writeRewindIntent(v, b.c.epoch, b.end); err != nil {
 		return err
 	}
-	db.cur = b.c
+	db.cur, db.logHigh = b.c, 0
 	db.cur.sealed = false
 	seq := db.seq()
 	for seq > db.entryBase && db.entries[seq-1-db.entryBase].ver > v {

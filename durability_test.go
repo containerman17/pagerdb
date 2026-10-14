@@ -1,7 +1,9 @@
 package pagerdb
 
 import (
+	"bytes"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -588,5 +590,197 @@ func TestRecoveryFailurePreservesUndo(t *testing.T) {
 	}
 	if tag[0] != 'E' {
 		t.Fatal("failed recovery destroyed its undo record")
+	}
+}
+
+// TestSyncPowerLoss simulates power loss in Sync mode. Every state page may
+// have reached disk. The log on disk is either exactly what its barriers wrote
+// (stale bytes elsewhere stay) or everything written so far. Recovery must
+// return exactly the last committed version in both cases.
+func TestSyncPowerLoss(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// A small region makes staged writes overlap often.
+	const size = 4 << 10
+	r, err := db.Alloc(size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, ver, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cur := make([]byte, size)
+	committed := bytes.Clone(cur)
+	disk := bytes.Clone(db.cur.m)
+	// barrier runs op and copies the log range its barrier writes into disk.
+	barrier := func(op func()) {
+		page := int64(os.Getpagesize())
+		from, high := db.blockStart/page*page, db.logHigh
+		op()
+		end := max(db.cur.tail, high)
+		copy(disk[from:end], db.cur.m[from:end])
+	}
+	rng := rand.New(rand.NewPCG(11, 12))
+	write := func() {
+		n := 1 + rng.IntN(300)
+		off := rng.IntN(size - n)
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = byte(rng.Uint32())
+		}
+		db.Write(r, off, b)
+		copy(cur[off:], b)
+	}
+	touch := func() {
+		n := 1 + rng.IntN(300)
+		off := rng.IntN(size - n)
+		barrier(func() { db.Touch(r, off, n) })
+		mp, err := db.Map(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := off; j < off+n; j++ {
+			mp[j] = byte(rng.Uint32())
+		}
+		copy(cur[off:], mp[off:off+n])
+	}
+	recoverFrom := func(logImage []byte) {
+		cdir := t.TempDir()
+		for _, d := range []string{"log", "epochs"} {
+			if err := os.MkdirAll(filepath.Join(cdir, d), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, name := range []string{"state", "tree"} {
+			b, err := os.ReadFile(filepath.Join(dir, name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(cdir, name), b, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(cdir, "log", filepath.Base(db.cur.f.Name())), logImage, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Open(cdir, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer got.Close()
+		if got.Version() != ver || got.Root() != root {
+			t.Fatalf("recovered version %d, want %d", got.Version(), ver)
+		}
+		b := make([]byte, size)
+		got.Read(r, 0, size, b)
+		if !bytes.Equal(b, committed) {
+			t.Fatal("recovered bytes differ from the last commit")
+		}
+	}
+	for i := 0; i < 250; i++ {
+		switch op := rng.IntN(20); {
+		case op < 9:
+			write()
+		case op < 13:
+			m := db.Mark()
+			saved := bytes.Clone(cur)
+			for range 1 + rng.IntN(4) {
+				if rng.IntN(4) == 0 {
+					touch()
+				} else {
+					write()
+				}
+			}
+			// The kernel may write back any dirty log page before the undo.
+			if rng.IntN(2) == 0 {
+				copy(disk, db.cur.m)
+			}
+			db.Undo(m)
+			cur = saved
+		case op < 15:
+			touch()
+		case op < 17:
+			barrier(func() {
+				if root, ver, err = db.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			})
+			committed = bytes.Clone(cur)
+		default:
+			recoverFrom(disk)
+			recoverFrom(db.cur.m)
+		}
+		b := make([]byte, size)
+		db.Read(r, 0, size, b)
+		if !bytes.Equal(b, cur) {
+			t.Fatalf("step %d: head bytes differ", i)
+		}
+	}
+}
+
+// TestSyncUndoClearsWrittenBackLog covers undone entries that reached disk by
+// writeback: the next barrier must clear them, or a later recovery would see
+// an aligned stale entry as a torn tail and undo it over committed bytes.
+func TestSyncUndoClearsWrittenBackLog(t *testing.T) {
+	dir := t.TempDir()
+	o := Options{MaxLeaves: 1 << 14, Sync: true}
+	db, err := Open(dir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	r, err := db.Alloc(LeafSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, ver, err := db.Commit()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := db.Mark()
+	// A 12-byte write makes a 56-byte entry, the size of a block record, so
+	// the second stale entry starts right after the next block record.
+	db.Write(r, 0, bytes.Repeat([]byte{1}, 12))
+	db.Write(r, 0, bytes.Repeat([]byte{2}, 12))
+	disk := bytes.Clone(db.cur.m) // written back before the undo
+	db.Undo(m)
+	page := int64(os.Getpagesize())
+	from, high := db.blockStart/page*page, db.logHigh
+	if root, ver, err = db.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	end := max(db.cur.tail, high)
+	copy(disk[from:end], db.cur.m[from:end])
+	cdir := t.TempDir()
+	for _, d := range []string{"log", "epochs"} {
+		if err := os.MkdirAll(filepath.Join(cdir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"state", "tree"} {
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = os.WriteFile(filepath.Join(cdir, name), b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(cdir, "log", filepath.Base(db.cur.f.Name())), disk, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Open(cdir, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer got.Close()
+	if got.Version() != ver || got.Root() != root {
+		t.Fatalf("recovered version %d, want %d", got.Version(), ver)
 	}
 }

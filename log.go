@@ -3,6 +3,7 @@ package pagerdb
 import (
 	"fmt"
 	"hash/crc32"
+	bits64 "math/bits"
 	"os"
 	"path/filepath"
 
@@ -69,6 +70,125 @@ type logState struct {
 	heads     map[uint32]int64 // leaf -> newest piece seq
 	blocks    []block          // window versions, checkpoints included
 	rootIdx   map[[32]byte]uint64
+
+	// Sync mode stages written bytes here until the pending block's log is
+	// durable, so a shared state page never holds a change without its undo
+	// record on disk. Entries from seq appliedSeq on are staged while the map
+	// is non-empty.
+	stage      map[uint32]*stageLeaf
+	spare      []*stageLeaf
+	appliedSeq int64
+	// logHigh is the end of log bytes that an undo cleared since the last
+	// barrier. The next barrier covers them, so undone entries that writeback
+	// already stored cannot reappear as a torn tail after power loss.
+	logHigh int64
+}
+
+// stageLeaf overlays one leaf: data where the cov bit is set, state elsewhere.
+type stageLeaf struct {
+	data [LeafSize]byte
+	cov  [LeafSize / 64]uint64
+}
+
+// overlay copies staged bytes of [at, at+len(out)) into out.
+func (s *stageLeaf) overlay(out []byte, at uint64) {
+	for i := range out {
+		b := at + uint64(i)
+		if s.cov[b/64]>>(b%64)&1 != 0 {
+			out[i] = s.data[b]
+		}
+	}
+}
+
+// readHead copies head bytes at state offset fo, including staged bytes.
+func (db *DB) readHead(fo uint64, out []byte) {
+	copy(out, db.state[fo:])
+	if len(db.stage) == 0 {
+		return
+	}
+	for pos := uint64(0); pos < uint64(len(out)); {
+		o := fo + pos
+		k := min(uint64(len(out))-pos, LeafSize-o%LeafSize)
+		if s := db.stage[uint32(o/LeafSize)]; s != nil {
+			s.overlay(out[pos:pos+k], o%LeafSize)
+		}
+		pos += k
+	}
+}
+
+// stageBytes records b at state offset fo without touching the state mapping.
+func (db *DB) stageBytes(fo uint64, b []byte) {
+	if db.stage == nil {
+		db.stage = map[uint32]*stageLeaf{}
+	}
+	for pos := uint64(0); pos < uint64(len(b)); {
+		o := fo + pos
+		at := o % LeafSize
+		k := min(uint64(len(b))-pos, LeafSize-at)
+		s := db.stage[uint32(o/LeafSize)]
+		if s == nil {
+			if n := len(db.spare); n > 0 {
+				s, db.spare = db.spare[n-1], db.spare[:n-1]
+				clear(s.cov[:])
+			} else {
+				s = new(stageLeaf)
+			}
+			db.stage[uint32(o/LeafSize)] = s
+		}
+		copy(s.data[at:at+k], b[pos:pos+k])
+		for i := at; i < at+k; i++ {
+			s.cov[i/64] |= 1 << (i % 64)
+		}
+		pos += k
+	}
+}
+
+// applyStage writes staged bytes into the state mapping and empties the stage.
+func (db *DB) applyStage() {
+	for leaf, s := range db.stage {
+		base := uint64(leaf) * LeafSize
+		for w, bits := range s.cov {
+			at := uint64(w) * 64
+			if bits == ^uint64(0) {
+				copy(db.state[base+at:base+at+64], s.data[at:at+64])
+				continue
+			}
+			for ; bits != 0; bits &= bits - 1 {
+				i := at + uint64(bits64.TrailingZeros64(bits))
+				db.state[base+i] = s.data[i]
+			}
+		}
+		db.spare = append(db.spare, s)
+	}
+	clear(db.stage)
+}
+
+// restage rebuilds the stage from the staged entries that remain after an undo.
+func (db *DB) restage() {
+	for _, s := range db.stage {
+		db.spare = append(db.spare, s)
+	}
+	clear(db.stage)
+	for i := db.appliedSeq; i < db.seq(); i++ {
+		e := db.entries[i-db.entryBase]
+		n := int64(e.n)
+		db.stageBytes(e.off, e.c.m[e.pos+entryHdr+n:e.pos+entryHdr+2*n])
+	}
+}
+
+// syncPending makes the pending block's log durable, then applies staged bytes.
+func (db *DB) syncPending() error {
+	c := db.cur
+	from := db.blockStart / int64(os.Getpagesize()) * int64(os.Getpagesize())
+	if err := unix.Msync(c.m[from:max(c.tail, db.logHigh)], unix.MS_SYNC); err != nil {
+		return err
+	}
+	if err := c.f.Sync(); err != nil {
+		return err
+	}
+	db.logHigh = c.tail
+	db.applyStage()
+	return nil
 }
 
 func (db *DB) seq() int64      { return db.entryBase + int64(len(db.entries)) }
@@ -153,24 +273,23 @@ func (db *DB) logEntry(r Region, fo, n uint64, b []byte) int64 {
 	le.PutUint32(e[8:], uint32(n))
 	le.PutUint64(e[16:], db.version+1)
 	le.PutUint64(e[24:], fo)
-	copy(e[entryHdr:], db.state[fo:fo+n])
+	db.readHead(fo, e[entryHdr:entryHdr+n])
 	if b != nil {
 		copy(e[entryHdr+n:], b)
 	}
 	le.PutUint32(e[12:], entryChecksum(e, n))
 	e[0] = 'E'
-	// The undo image must reach disk before any shared state byte can change.
-	if db.o.Sync {
-		from := pos / int64(os.Getpagesize()) * int64(os.Getpagesize())
-		if err := unix.Msync(db.cur.m[from:db.cur.tail], unix.MS_SYNC); err != nil {
-			panic(fmt.Sprintf("pagerdb: durable undo: %v", err))
-		}
-		if err := db.cur.f.Sync(); err != nil {
-			panic(fmt.Sprintf("pagerdb: durable undo file: %v", err))
-		}
-	}
+	// In Sync mode the undo image must reach disk before any shared state byte
+	// can change, so new bytes wait in the stage for the block's log barrier.
 	if b != nil {
-		copy(db.state[fo:fo+n], e[entryHdr+n:])
+		if db.o.Sync {
+			if len(db.stage) == 0 {
+				db.appliedSeq = db.seq()
+			}
+			db.stageBytes(fo, e[entryHdr+n:])
+		} else {
+			copy(db.state[fo:fo+n], e[entryHdr+n:])
+		}
 	}
 	db.markDirty(fo, n)
 	db.index(db.cur, pos, db.version+1, fo, n)
@@ -200,13 +319,19 @@ func (db *DB) Write(r Region, off int, b []byte) {
 }
 
 // Touch announces a direct write through Map: the old bytes are logged now, the new bytes
-// are read at Commit.
+// are read at Commit. In Sync mode it makes the log durable (one barrier) and
+// applies staged writes to the state mapping before returning.
 func (db *DB) Touch(r Region, off, n int) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	db.loc(r).each(uint64(off), uint64(n), func(fo, pos, k uint64) {
 		db.touches = append(db.touches, db.logEntry(r, fo, k, nil))
 	})
+	if db.o.Sync {
+		if err := db.syncPending(); err != nil {
+			panic(fmt.Sprintf("pagerdb: durable undo: %v", err))
+		}
+	}
 }
 
 // rotate closes the current epoch and opens the next with a checkpoint mark.
@@ -241,7 +366,7 @@ func (db *DB) rotate() error {
 	if err != nil {
 		return err
 	}
-	db.cur = c
+	db.cur, db.logHigh = c, 0
 	db.chunks = append(db.chunks, c)
 	db.blocks = append(db.blocks, block{ver: db.version, root: db.root, c: c, end: cpRec})
 	db.blockStart, db.blockSeq = c.tail, db.seq()

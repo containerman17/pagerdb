@@ -21,7 +21,7 @@ func classOf(size uint64) uint32 {
 
 func classSize(c uint32) uint64 { return LeafSize << (c - 1) }
 
-func (db *DB) hdr(off uint64) uint64 { return le.Uint64(db.state[off:]) }
+func (db *DB) hdr(off uint64) uint64 { return db.headU64(off) }
 
 func (db *DB) setHdr(off, v uint64) {
 	var b [8]byte
@@ -101,7 +101,24 @@ func (l loc) each(off, n uint64, f func(fileOff, pos, n uint64)) {
 	}
 }
 
-func (db *DB) headU64(off uint64) uint64 { return le.Uint64(db.state[off:]) }
+func (db *DB) headU64(off uint64) uint64 {
+	if len(db.stage) == 0 {
+		return le.Uint64(db.state[off:])
+	}
+	var b [8]byte
+	db.readHead(off, b[:])
+	return le.Uint64(b[:])
+}
+
+// headBytes returns n head bytes at fo: the state mapping, or a copy with staged bytes.
+func (db *DB) headBytes(fo, n uint64) []byte {
+	if len(db.stage) == 0 {
+		return db.state[fo : fo+n]
+	}
+	b := make([]byte, n)
+	db.readHead(fo, b)
+	return b
+}
 
 // loc resolves a region at head, caching segment chains.
 func (db *DB) loc(r Region) loc {
@@ -320,7 +337,7 @@ func (db *DB) grow(r Region, l loc, size uint64) error {
 		if err != nil {
 			return err
 		}
-		db.put(r, off, db.state[l.off:l.off+l.size])
+		db.put(r, off, db.headBytes(l.off, l.size))
 		db.setRegion(r, c, 0, off)
 	} else {
 		n := (size + SegSize - 1) / SegSize
@@ -328,7 +345,7 @@ func (db *DB) grow(r Region, l loc, size uint64) error {
 		if err != nil {
 			return err
 		}
-		db.put(r, first*SegSize, db.state[l.off:l.off+l.size])
+		db.put(r, first*SegSize, db.headBytes(l.off, l.size))
 		db.setRegion(r, kindLarge, uint32(n), first)
 	}
 	db.freeSlot(oldC, l.off)
@@ -359,11 +376,18 @@ func (db *DB) Free(r Region) error {
 // Map returns the region's head bytes as one writable slice, valid until Free or Grow of r
 // (or an Undo or Rewind that reverts its allocation). Writes through it must be announced
 // with Touch first. Regions above 2 MiB are mapped back to back with MAP_FIXED.
+// In Sync mode, Write bytes reach the slice at the next Commit, Touch or Map;
+// Map applies pending ones after one log barrier.
 func (db *DB) Map(r Region) ([]byte, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 	if _, err := locate(db.headU64, db.regTab, db.maxRegions, r); err != nil {
 		return nil, err
+	}
+	if len(db.stage) > 0 {
+		if err := db.syncPending(); err != nil {
+			return nil, err
+		}
 	}
 	l := db.loc(r)
 	if l.segs == nil {
@@ -388,9 +412,9 @@ func (db *DB) Map(r Region) ([]byte, error) {
 	return m, nil
 }
 
-// Read copies n head bytes at off into buf.
+// Read copies n head bytes at off into buf, including uncommitted writes.
 func (db *DB) Read(r Region, off, n int, buf []byte) {
 	db.loc(r).each(uint64(off), uint64(n), func(fo, pos, k uint64) {
-		copy(buf[pos:pos+k], db.state[fo:fo+k])
+		db.readHead(fo, buf[pos:pos+k])
 	})
 }

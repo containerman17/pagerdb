@@ -149,9 +149,15 @@ func checkModel(t testing.TB, db *DB, m model) {
 }
 
 func TestModel(t *testing.T) {
+	t.Run("NoSync", func(t *testing.T) { testModel(t, false) })
+	// Sync stages Write bytes until the block's barrier; reads must still see them.
+	t.Run("Sync", func(t *testing.T) { testModel(t, true) })
+}
+
+func testModel(t *testing.T, syncMode bool) {
 	dir := t.TempDir()
 	const maxLeaves = 1 << 15
-	db, err := Open(dir, Options{MaxLeaves: maxLeaves})
+	db, err := Open(dir, Options{MaxLeaves: maxLeaves, Sync: syncMode})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +168,7 @@ func TestModel(t *testing.T) {
 		for range rng.IntN(40) {
 			step(t, rng, db, m, testSizes)
 		}
+		checkModel(t, db, m)
 		root, ver, err := db.Commit()
 		if err != nil {
 			t.Fatal(err)
