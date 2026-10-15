@@ -553,3 +553,29 @@ func TestDiskError(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestMissingManifest(t *testing.T) {
+	db := openTest(t, Options{})
+	dir := db.dir
+	must(t, db.Close())
+	must(t, os.Remove(filepath.Join(dir, "CURRENT")))
+	if reopened, e := Open(dir, Options{MaxLeaves: 4096}); e == nil {
+		reopened.Close()
+		t.Fatal("silently reset an existing store")
+	}
+}
+func TestManifestVersion(t *testing.T) {
+	db := openTest(t, Options{})
+	dir := db.dir
+	must(t, db.Close())
+	path := filepath.Join(dir, "CURRENT")
+	data, e := os.ReadFile(path)
+	must(t, e)
+	le.PutUint64(data[16:], 9)
+	le.PutUint32(data[60:], checksum(data[:60]))
+	must(t, os.WriteFile(path, data, 0600))
+	if reopened, e := Open(dir, Options{MaxLeaves: 4096}); e == nil {
+		reopened.Close()
+		t.Fatal("accepted a mismatched version")
+	}
+}

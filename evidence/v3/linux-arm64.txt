@@ -1,2 +1,2 @@
-ok  	github.com/containerman17/pagerdb	0.162s
-ok  	github.com/containerman17/pagerdb	1.444s
+ok  	github.com/containerman17/pagerdb	0.168s
+ok  	github.com/containerman17/pagerdb	1.467s

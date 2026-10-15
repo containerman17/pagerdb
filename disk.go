@@ -75,7 +75,7 @@ func openDisk(db *DB) (_ *diskWriter, err error) {
 		if st.Size() < d.end {
 			return nil, io.ErrUnexpectedEOF
 		}
-		if err = d.load(); err != nil {
+		if err = d.load(manifest); err != nil {
 			return nil, err
 		}
 		db.version = le.Uint64(manifest[16:])
@@ -99,6 +99,13 @@ func openDisk(db *DB) (_ *diskWriter, err error) {
 		}
 		d.resetChanged()
 	} else if errors.Is(e, os.ErrNotExist) {
+		entries, readErr := os.ReadDir(filepath.Join(db.dir, "log"))
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return nil, readErr
+		}
+		if len(entries) != 0 {
+			return nil, fmt.Errorf("pagerdb: missing checkpoint manifest in an existing store")
+		}
 		// A checkpoint tail without CURRENT was never published. Start at genesis.
 		copy(db.state, "PAGER003")
 		le.PutUint64(db.state[8:], db.o.MaxLeaves)
@@ -149,7 +156,7 @@ func (d *diskWriter) resetChanged() {
 	}
 	d.changed = d.changed[:0]
 }
-func (d *diskWriter) load() error {
+func (d *diskWriter) load(manifest []byte) error {
 	var off int64
 	var header [64]byte
 	var rec [4 + LeafSize]byte
@@ -194,6 +201,9 @@ func (d *diskWriter) load() error {
 		off += 4
 		if le.Uint32(sum[:]) != h.Sum32() {
 			return fmt.Errorf("pagerdb: checkpoint checksum mismatch")
+		}
+		if off == d.end && (le.Uint64(header[16:]) != le.Uint64(manifest[16:]) || [32]byte(header[32:]) != [32]byte(manifest[24:56])) {
+			return fmt.Errorf("pagerdb: checkpoint header differs from manifest")
 		}
 	}
 	return nil
