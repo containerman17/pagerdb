@@ -89,7 +89,13 @@ Final ring pending observations are 22 / 0; ring wait averages 0.078170 /
 0.000015 ms per block. Ring waits still belong to Commit. They do not explain
 the remaining write outliers. The full per-block wait counters remain in the raw
 output and metrics.json. BenchmarkCommitReusable still reports zero bytes and
-zero allocations in all six warmed runs after this change.
+zero allocations in all six warmed repeat runs after this change. The first
+final-code invocation had one 512-leaf sample at 5 B/op with a rounded 0
+allocs/op; it is retained in benchmem-first.txt. The other five samples were zero.
+The repeat in benchmem.txt is zero in all six rows. Exact AllocsPerRun regression
+checks also pass. The isolated nonzero byte sample is not attributed to a source;
+these results support no recurring allocation per warmed block, not a claim
+that every process-wide benchmark sample must always be exactly zero.
 
 ## Verification
 
@@ -100,9 +106,10 @@ word clearing and bound reset. Existing deterministic roots across worker counts
 Undo, Rewind, views, proofs, overlap, subprocess crash recovery and allocation
 regressions pass. TestUndoGrowth checks doubling, at most one growth per
 known-size cold block, no growth after ring reuse, and isolation from a large
-setup block. Hosted Linux/macOS CI and both full Wasm fixture pairs are
-checked after the pushed dependency is available; their final results belong in
-the host's round3 report.
+setup block. Hosted Linux/macOS vet/race/no-cgo CI passes for the final production change:
+https://github.com/containerman17/pagerdb/actions/runs/38720213504
+Both full Wasm fixture pairs are checked after the pushed dependency is
+available; their final results belong in the host's round3 report.
 
 ## Reproduction
 
