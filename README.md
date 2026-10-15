@@ -78,11 +78,21 @@ then set dirty-leaf bits. They do not deduplicate: the caller can use first-writ
 tracking where its transaction semantics permit it. Mark/Undo need every change
 since a mark. The packed buffer has no Go object per write.
 
-Commit waits for the previous **hash only**, sorts dirty leaf IDs, copies leaves
-with the persistent worker pool, and submits an immutable snapshot. Those same
+Commit waits for the previous hash and a free snapshot slot, sorts dirty leaf IDs,
+and copies leaves with the persistent worker pool. It submits an immutable snapshot.
+Those same
 workers hash leaves and fold sorted parent paths while the owner executes the
 next block. At most one hash overlaps one execution. Hash completion publishes
 the root independently of journal completion.
+
+Three strongly retained snapshot buffers form a fixed ring. A slot stays immutable
+until the disk worker finishes with it, including any checkpoint for that block.
+Buffers grow geometrically only when a block exceeds their capacity. Reuse never
+clears them; the parallel copy overwrites exactly the required bytes. GC cannot
+discard these buffers. Metadata/completion objects, undo buffers, dirty IDs, hash
+scratch space, and the journal assembly buffer are also reused. A warmed fixed
+workload allocates no heap memory per block, including its hash and journal work;
+buffer growth, checkpoints and epoch rotation can allocate.
 
 A separate disk worker appends one packed write per block with no per-block
 fsync. It also applies snapshots to a private checkpoint image. Every K blocks,
@@ -92,8 +102,11 @@ manifest, atomic rename, and directory fsync publish the complete checkpoint.
 Tree hashes are reconstructed and verified on Open rather than stored twice.
 Checkpoint frames form an incremental image; compaction is deferred.
 
-The disk queue has no backpressure. A slow disk can grow RAM use without bound.
-Disk errors become sticky and surface at the next Commit, Flush, Checkpoint, or
+The disk queue is bounded by the three snapshot slots. If all are still busy,
+Commit waits for the oldest consumer before reusing its storage. Thus a stalled
+disk or checkpoint can apply backpressure after the ring fills. This replaces
+v3's initial unbounded queue and GC-dependent snapshot pool. Disk errors become
+sticky and surface at the next Commit, Flush, Checkpoint, or
 Close. A commit already returned before a disk error may have a valid RAM root
 but no journal record. This phase makes no durability promise for Commit.
 
@@ -122,8 +135,8 @@ sync ordering; physical power-cut testing remains unverified.
 | EpochBytes | 1 GiB | Journal file cut size; an oversized block stays intact |
 
 Zero selects the default. State capacity changes roots. The other options do not.
-Retention scales with recorded old bytes. Snapshots, the checkpoint image and
-queue use additional RAM. Allocator growth can require a contiguous free extent
+Retention scales with recorded old bytes. Three snapshot buffers and the checkpoint
+image use additional RAM. Allocator growth can require a contiguous free extent
 and can copy the old region. Views copy state; no lazy fault machinery is used.
 
 ## Disk format (little endian)
@@ -174,6 +187,14 @@ read/increment/write operations per block, uniform and normal sigma 1% / 0.1%.
 It includes the final disk drain. Commit timings measure snapshot plus prior hash
 wait, not blocking root calculation. Dirty-leaf counts use the 4 KiB constant.
 Do not compare these timers directly with v2's blocking Commit/Seal timers.
+
+`go test -run '^$' -bench '^BenchmarkCommitReusable$' -benchmem -benchtime=1000x`
+measures a warmed write/Commit/Flush cycle at 8 and 512 dirty leaves. It includes
+all background work and excludes automatic checkpoints and epoch rotation.
+`TestCommitAllocations` checks zero allocations across 32 and 256 blocks, worker
+counts and retention settings, with GC between runs. Additional tests check
+snapshot growth, unchanged capacity after smaller blocks, full-ring backpressure,
+and rewind after repeated metadata reuse.
 Evidence under `evidence/` predating v3 describes the old implementation.
 
 ## Phase 2

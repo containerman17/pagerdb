@@ -44,6 +44,14 @@ type Options struct {
 	EpochBytes         int64  // Default 1 GiB; a single oversized block stays intact.
 }
 
+const snapshotCount = 3
+
+type snapshotSlot struct {
+	data []byte
+	ids  []uint32
+	done sync.WaitGroup
+}
+
 type block struct {
 	version    uint64
 	parent     uint64
@@ -51,35 +59,43 @@ type block struct {
 	ids        []uint32
 	data       []byte
 	root       [32]byte
-	ready      chan struct{}
-	persisted  chan struct{}
+	ready      sync.WaitGroup
+	persisted  sync.WaitGroup
 	checkpoint bool
 	rewind     bool
+	retained   bool
+	journal    bool
+	snapshot   *snapshotSlot
 }
 
 // DB methods and mapped slices require a single owner. This includes RootAt,
 // Commit, View creation, Rewind and Close. A View owns its bytes after creation.
 type DB struct {
-	dir         string
-	o           Options
-	state       []byte
-	lock        *os.File
-	tree        *tree
-	pool        *pool
-	version     uint64
-	baseVersion uint64
-	baseRoot    [32]byte
-	history     []*block
-	latest      *block
-	undo        []byte
-	dirty       []uint32
-	dirtyBits   []uint64
-	generation  uint64
-	jobs        chan *block
-	hashDone    chan struct{}
-	disk        *diskWriter
-	closed      bool
-	buffers     sync.Pool
+	dir          string
+	o            Options
+	state        []byte
+	lock         *os.File
+	tree         *tree
+	pool         *pool
+	version      uint64
+	baseVersion  uint64
+	baseRoot     [32]byte
+	history      []*block
+	latest       *block
+	undo         []byte
+	dirty        []uint32
+	dirtyBits    []uint64
+	generation   uint64
+	jobs         chan *block
+	hashDone     chan struct{}
+	disk         *diskWriter
+	closed       bool
+	snapshots    [snapshotCount]snapshotSlot
+	nextSnapshot int
+	blocks       []block
+	nextBlock    int
+	copying      *snapshotSlot
+	copyLeaf     func(int)
 	// Test hooks run on background workers, before touching their job.
 	beforeHash func()
 	beforeDisk func()
@@ -151,6 +167,13 @@ func Open(dir string, o Options) (_ *DB, err error) {
 	db.pool = newPool(o.Workers)
 	db.dirtyBits = make([]uint64, (o.MaxLeaves+63)/64)
 	db.undo = make([]byte, 0, 1<<20)
+	db.history = make([]*block, 0, o.RetainVersions+1)
+	db.blocks = make([]block, o.RetainVersions+snapshotCount+1)
+	db.copyLeaf = func(i int) {
+		slot := db.copying
+		off := uint64(slot.ids[i]) * LeafSize
+		copy(slot.data[i*LeafSize:(i+1)*LeafSize], db.state[off:off+LeafSize])
+	}
 	db.disk, err = openDisk(db)
 	if err != nil {
 		return nil, err
@@ -241,9 +264,9 @@ func (db *DB) Read(r Region, off, n int, dst []byte) {
 	copy(dst, db.state[p:p+uint64(n)])
 }
 
-// Commit snapshots changed leaves and submits hashing. It can wait for the
-// previous hash, but never waits for journal or checkpoint I/O. The next block
-// may mutate mapped state as soon as Commit returns.
+// Commit snapshots changed leaves and submits hashing. It waits for the prior
+// hash and, if all three snapshot slots are busy, the oldest disk consumer.
+// The next block may mutate mapped state as soon as Commit returns.
 func (db *DB) Commit() (uint64, error) {
 	db.check()
 	if db.version == math.MaxUint64 {
@@ -254,62 +277,84 @@ func (db *DB) Commit() (uint64, error) {
 	}
 	db.waitHash()
 	b := db.snapshot()
+	// Slot acquisition can wait for disk work that reports a new error.
+	if err := db.disk.failure(); err != nil {
+		b.snapshot.done.Done()
+		b.snapshot = nil
+		return 0, err
+	}
 	b.parent = db.version
 	db.version++
 	b.version = db.version
-	b.undo = db.undo
-	db.undo = nil
+	db.undo, b.undo = b.undo[:0], db.undo
 	db.generation++
 	b.checkpoint = b.version%db.o.CheckpointInterval == 0
+	b.ready.Add(1)
+	b.persisted.Add(1)
+	b.journal = true
+	b.retained = true
 	db.latest = b
 	db.history = append(db.history, b)
 	if uint64(len(db.history)) > db.o.RetainVersions {
 		old := db.history[0]
-		<-old.ready
+		old.ready.Wait()
 		db.baseVersion = old.version
 		db.baseRoot = old.root
-		// Reuse an expired undo buffer only after the disk worker releases it.
-		// A slow disk never makes the owner wait for this optional reuse.
-		select {
-		case <-old.persisted:
-			db.undo = old.undo[:0]
-		default:
-		}
-		db.history[0] = nil
-		db.history = db.history[1:]
-	}
-	if db.undo == nil {
-		db.undo = make([]byte, 0, max(1<<20, len(b.undo)))
+		old.retained = false
+		copy(db.history, db.history[1:])
+		db.history[len(db.history)-1] = nil
+		db.history = db.history[:len(db.history)-1]
 	}
 	db.jobs <- b
 	return b.version, nil
 }
+
+// Completed blocks remain in a fixed metadata ring while their undo is retained.
+// Snapshot storage has a separate, smaller ring and never depends on GC eviction.
+func (db *DB) acquireBlock() *block {
+	for {
+		b := &db.blocks[db.nextBlock]
+		db.nextBlock = (db.nextBlock + 1) % len(db.blocks)
+		if b.retained {
+			continue
+		}
+		b.ready.Wait()
+		b.persisted.Wait()
+		b.checkpoint = false
+		b.rewind = false
+		b.journal = false
+		return b
+	}
+}
 func (db *DB) snapshot() *block {
+	slot := &db.snapshots[db.nextSnapshot]
+	db.nextSnapshot = (db.nextSnapshot + 1) % len(db.snapshots)
+	slot.done.Wait()
+	b := db.acquireBlock()
 	slices.Sort(db.dirty)
-	ids := db.dirty
-	db.dirty = nil
-	size := len(ids) * LeafSize
-	var data []byte
-	if old := db.buffers.Get(); old != nil {
-		data = old.([]byte)
+	slot.ids, db.dirty = db.dirty, slot.ids[:0]
+	size := len(slot.ids) * LeafSize
+	if cap(slot.data) < size {
+		// Geometric growth avoids reallocating for each small new high-water mark.
+		capacity := min(len(db.state), max(size, 2*cap(slot.data)))
+		slot.data = make([]byte, capacity)
 	}
-	if cap(data) < size {
-		data = make([]byte, size)
-	} else {
-		data = data[:size]
-	}
-	db.pool.each(len(ids), func(i int) {
-		off := uint64(ids[i]) * LeafSize
-		copy(data[i*LeafSize:(i+1)*LeafSize], db.state[off:off+LeafSize])
-	})
-	for _, id := range ids {
+	slot.data = slot.data[:size]
+	db.copying = slot
+	db.pool.each(len(slot.ids), db.copyLeaf)
+	db.copying = nil
+	for _, id := range slot.ids {
 		db.dirtyBits[id/64] &= ^(uint64(1) << (id % 64))
 	}
-	return &block{ids: ids, data: data, ready: make(chan struct{}), persisted: make(chan struct{})}
+	b.ids = slot.ids
+	b.data = slot.data
+	b.snapshot = slot
+	slot.done.Add(1)
+	return b
 }
 func (db *DB) waitHash() {
 	if db.latest != nil {
-		<-db.latest.ready
+		db.latest.ready.Wait()
 	}
 }
 func (db *DB) hashLoop() {
@@ -321,7 +366,7 @@ func (db *DB) hashLoop() {
 		db.tree.update(b.ids, b.data, db.pool)
 		b.root = db.tree.root()
 		db.disk.enqueue(b)
-		close(b.ready)
+		b.ready.Done()
 	}
 }
 
@@ -351,7 +396,7 @@ func (db *DB) RootAt(v uint64) ([32]byte, error) {
 	for i := len(db.history) - 1; i >= 0; i-- {
 		b := db.history[i]
 		if b.version == v {
-			<-b.ready
+			b.ready.Wait()
 			return b.root, nil
 		}
 	}
@@ -366,7 +411,7 @@ func (db *DB) Flush() error {
 	db.check()
 	db.waitHash()
 	if db.latest != nil {
-		<-db.latest.persisted
+		db.latest.persisted.Wait()
 	}
 	return db.disk.failure()
 }
@@ -379,9 +424,13 @@ func (db *DB) Checkpoint() error {
 		return ErrPending
 	}
 	db.waitHash()
-	b := &block{version: db.version, root: db.Root(), checkpoint: true, persisted: make(chan struct{})}
+	b := db.acquireBlock()
+	b.version = db.version
+	b.root = db.Root()
+	b.checkpoint = true
+	b.persisted.Add(1)
 	db.disk.enqueue(b)
-	<-b.persisted
+	b.persisted.Wait()
 	return db.disk.failure()
 }
 
@@ -399,12 +448,28 @@ func (db *DB) Close() error {
 	return errors.Join(err, db.release())
 }
 func (db *DB) release() error {
+	// Close can outlive the caller's DB pointer; drop strongly retained buffers.
+	for i := range db.snapshots {
+		db.snapshots[i].data = nil
+		db.snapshots[i].ids = nil
+	}
+	db.history = nil
+	db.blocks = nil
+	db.latest = nil
+	db.undo = nil
+	db.dirty = nil
+	if db.disk != nil {
+		db.disk.record = nil
+		db.disk.changed = nil
+	}
 	var errs []error
 	if db.pool != nil {
 		db.pool.close()
+		db.pool = nil
 	}
 	if db.tree != nil {
 		errs = append(errs, db.tree.close())
+		db.tree = nil
 	}
 	if db.state != nil {
 		errs = append(errs, unix.Munmap(db.state))

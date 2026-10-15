@@ -1,0 +1,2 @@
+Shared benchmark lock acquired; correctness run only.
+ok  	github.com/containerman17/pagerdb	4.115s

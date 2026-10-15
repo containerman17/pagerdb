@@ -29,7 +29,10 @@ type diskWriter struct {
 	end          int64
 	mu           sync.Mutex
 	cond         *sync.Cond
-	queue        []*block
+	queue        [snapshotCount + 1]*block
+	queueHead    int
+	queueLength  int
+	record       []byte
 	stopping     bool
 	err          error
 	done         chan struct{}
@@ -295,7 +298,8 @@ func (d *diskWriter) rotate() error {
 func (d *diskWriter) append(b *block) error {
 	// Header: magic, frame bytes, version, parent version, root, undo bytes,
 	// flags (1 = rewind), reserved. Footer CRC-32C covers header and undo.
-	record := make([]byte, 88, 88+len(b.undo)+4)
+	record := slices.Grow(d.record[:0], 88+len(b.undo)+4)[:88]
+	clear(record)
 	copy(record, "PGJNL003")
 	le.PutUint64(record[8:], uint64(88+len(b.undo)+4))
 	le.PutUint64(record[16:], b.version)
@@ -307,6 +311,7 @@ func (d *diskWriter) append(b *block) error {
 	}
 	record = append(record, b.undo...)
 	record = le.AppendUint32(record, crc32.Checksum(record, crcTable))
+	d.record = record
 	if d.journalBytes > 0 && d.journalBytes+int64(len(record)) > d.db.o.EpochBytes {
 		if err := d.rotate(); err != nil {
 			return err
@@ -321,7 +326,11 @@ func (d *diskWriter) append(b *block) error {
 }
 func (d *diskWriter) enqueue(b *block) {
 	d.mu.Lock()
-	d.queue = append(d.queue, b)
+	if d.queueLength == len(d.queue) {
+		panic("pagerdb: disk queue exceeded snapshot ring")
+	}
+	d.queue[(d.queueHead+d.queueLength)%len(d.queue)] = b
+	d.queueLength++
 	d.cond.Signal()
 	d.mu.Unlock()
 }
@@ -330,16 +339,17 @@ func (d *diskWriter) run() {
 	defer close(d.done)
 	for {
 		d.mu.Lock()
-		for len(d.queue) == 0 && !d.stopping {
+		for d.queueLength == 0 && !d.stopping {
 			d.cond.Wait()
 		}
-		if len(d.queue) == 0 && d.stopping {
+		if d.queueLength == 0 && d.stopping {
 			d.mu.Unlock()
 			break
 		}
-		b := d.queue[0]
-		d.queue[0] = nil
-		d.queue = d.queue[1:]
+		b := d.queue[d.queueHead]
+		d.queue[d.queueHead] = nil
+		d.queueHead = (d.queueHead + 1) % len(d.queue)
+		d.queueLength--
 		failed := d.err != nil
 		d.mu.Unlock()
 		var err error
@@ -347,7 +357,7 @@ func (d *diskWriter) run() {
 			if d.db.beforeDisk != nil {
 				d.db.beforeDisk()
 			}
-			if b.ready != nil {
+			if b.journal {
 				err = d.append(b)
 			}
 			if err == nil {
@@ -361,17 +371,19 @@ func (d *diskWriter) run() {
 				}
 			}
 		}
-		if b.data != nil {
-			d.db.buffers.Put(b.data)
-			b.data = nil
-		}
+		b.data = nil
 		b.ids = nil
+		slot := b.snapshot
+		b.snapshot = nil
 		if err != nil {
 			d.mu.Lock()
 			d.err = err
 			d.mu.Unlock()
 		}
-		close(b.persisted)
+		if slot != nil {
+			slot.done.Done()
+		}
+		b.persisted.Done()
 	}
 	err := errors.Join(d.journal.Close(), d.file.Close(), unix.Munmap(d.image))
 	d.mu.Lock()

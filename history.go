@@ -23,6 +23,7 @@ func (db *DB) Rewind(v uint64) error {
 	for len(db.history) > 0 && db.history[len(db.history)-1].version > v {
 		i := len(db.history) - 1
 		restore(db.state, db.history[i].undo, db.markDirty)
+		db.history[i].retained = false
 		db.history[i] = nil
 		db.history = db.history[:i]
 	}
@@ -34,12 +35,16 @@ func (db *DB) Rewind(v uint64) error {
 	b.rewind = true
 	b.checkpoint = true
 	db.latest = b
+	b.journal = true
+	b.undo = b.undo[:0]
+	b.ready.Add(1)
+	b.persisted.Add(1)
 	db.jobs <- b
-	<-b.ready
+	b.ready.Wait()
 	if b.root != root {
 		return fmt.Errorf("pagerdb: rewind root mismatch")
 	}
-	<-b.persisted
+	b.persisted.Wait()
 	return db.disk.failure()
 }
 

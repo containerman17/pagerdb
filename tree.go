@@ -2,8 +2,10 @@ package pagerdb
 
 import (
 	"crypto/sha256"
-	"golang.org/x/sys/unix"
 	"math/bits"
+	"slices"
+
+	"golang.org/x/sys/unix"
 )
 
 type work struct {
@@ -60,9 +62,15 @@ func hashPair(a, b [32]byte) [32]byte {
 // Untouched virtual tree pages contain zero, interpreted as the precomputed
 // empty subtree at that level. Only paths to touched leaves consume RAM.
 type tree struct {
-	n     uint64
-	mem   []byte
-	empty [][32]byte
+	n          uint64
+	mem        []byte
+	empty      [][32]byte
+	nodes      []uint64
+	ids        []uint32
+	data       []byte
+	level      int
+	hashLeaf   func(int)
+	hashParent func(int)
 }
 
 func newTree(n uint64) (*tree, error) {
@@ -71,6 +79,8 @@ func newTree(n uint64) (*tree, error) {
 		return nil, err
 	}
 	t := &tree{n: n, mem: mem, empty: make([][32]byte, bits.Len64(n))}
+	t.hashLeaf = func(i int) { t.set(t.n+uint64(t.ids[i]), sha256.Sum256(t.data[i*LeafSize:(i+1)*LeafSize])) }
+	t.hashParent = func(i int) { v := t.nodes[i]; t.set(v, hashPair(t.get(2*v, t.level-1), t.get(2*v+1, t.level-1))) }
 	t.empty[0] = sha256.Sum256(make([]byte, LeafSize))
 	for i := 1; i < len(t.empty); i++ {
 		t.empty[i] = hashPair(t.empty[i-1], t.empty[i-1])
@@ -90,23 +100,27 @@ func (t *tree) update(ids []uint32, data []byte, p *pool) {
 	if len(ids) == 0 {
 		return
 	}
-	p.each(len(ids), func(i int) { t.set(t.n+uint64(ids[i]), sha256.Sum256(data[i*LeafSize:(i+1)*LeafSize])) })
-	nodes := make([]uint64, len(ids))
+	t.ids = ids
+	t.data = data
+	p.each(len(ids), t.hashLeaf)
+	t.nodes = slices.Grow(t.nodes[:0], len(ids))[:len(ids)]
 	for i, id := range ids {
-		nodes[i] = t.n + uint64(id)
+		t.nodes[i] = t.n + uint64(id)
 	}
-	for level := 1; nodes[0] > 1; level++ {
-		next := nodes[:0]
+	for t.level = 1; t.nodes[0] > 1; t.level++ {
+		next := t.nodes[:0]
 		last := uint64(0)
-		for _, id := range nodes {
+		for _, id := range t.nodes {
 			v := id / 2
 			if v != last {
 				next = append(next, v)
 				last = v
 			}
 		}
-		nodes = next
-		p.each(len(nodes), func(i int) { v := nodes[i]; t.set(v, hashPair(t.get(2*v, level-1), t.get(2*v+1, level-1))) })
+		t.nodes = next
+		p.each(len(t.nodes), t.hashParent)
 	}
+	t.ids = nil
+	t.data = nil
 }
 func (t *tree) close() error { return unix.Munmap(t.mem) }
