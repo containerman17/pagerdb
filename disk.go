@@ -46,6 +46,7 @@ type diskWriter struct {
 	journal     *os.File
 	record      []byte
 	masks       [][2]uint64
+	index       []uint32 // leaf id -> position in the current block's ids
 	queue       [snapshotCount + 1]*block
 	queueHead   int
 	queueLength int
@@ -546,13 +547,13 @@ func (d *diskWriter) rotate() error {
 }
 
 // final copies the block's committed bytes at absolute offset off into dst.
-// mark sets the mask bit of every chunk in [off, off+n). The block's sorted ids
-// map each leaf to its mask and snapshot index.
-func (b *block) mark(masks [][2]uint64, off, n uint64) {
+// mark sets the mask bit of every chunk in [off, off+n). index maps each of the
+// block's leaves to its position in b.ids; entries for other leaves are stale.
+func (b *block) mark(masks [][2]uint64, index []uint32, off, n uint64) {
 	for end := off + n; off < end; {
 		leaf := off / LeafSize
-		i, ok := slices.BinarySearch(b.ids, uint32(leaf))
-		if !ok {
+		i := index[leaf]
+		if int(i) >= len(b.ids) || b.ids[i] != uint32(leaf) {
 			panic("pagerdb: undo range outside the snapshot")
 		}
 		last := min(end, (leaf+1)*LeafSize) - 1
@@ -586,10 +587,16 @@ func (d *diskWriter) append(b *block) error {
 		}
 	} else {
 		clear(masks)
+		if d.index == nil {
+			d.index = make([]uint32, d.db.o.MaxLeaves)
+		}
+		for i, id := range b.ids {
+			d.index[id] = uint32(i)
+		}
 		for u := b.undo; len(u) > 0; {
 			n := le.Uint64(u[len(u)-8:])
 			start := len(u) - 16 - int(n)
-			b.mark(masks, le.Uint64(u[start:]), n)
+			b.mark(masks, d.index, le.Uint64(u[start:]), n)
 			u = u[:start]
 		}
 	}
