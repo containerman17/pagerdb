@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
-	"fmt"
 	"hash/crc32"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -243,91 +241,50 @@ func TestCommitOverlap(t *testing.T) {
 	}
 	must(t, db.Verify())
 }
-func TestCheckpointCrash(t *testing.T) {
-	if dir := os.Getenv("PAGERDB_CRASH_DIR"); dir != "" {
-		db, e := Open(dir, Options{MaxLeaves: 4096, CheckpointInterval: 2})
-		if e != nil {
-			panic(e)
-		}
-		r, e := db.Alloc(10000)
-		if e != nil {
-			panic(e)
-		}
-		db.Write(r, 1, []byte("one"))
-		db.CommitWait()
-		db.Write(r, 1, []byte("two"))
-		root, _, e := db.CommitWait()
-		if e != nil {
-			panic(e)
-		}
-		if e = db.Flush(); e != nil {
-			panic(e)
-		}
-		db.Write(r, 1, []byte("three"))
-		db.CommitWait()
-		db.Flush()
-		db.Write(r, 1, []byte("pending"))
-		fmt.Printf("READY %x\n", root)
-		os.Stdout.Sync()
-		time.Sleep(time.Hour)
-	}
-	dir := t.TempDir()
-	cmd := exec.Command(os.Args[0], "-test.run=^TestCheckpointCrash$")
-	cmd.Env = append(os.Environ(), "PAGERDB_CRASH_DIR="+dir)
-	out, e := cmd.StdoutPipe()
-	must(t, e)
-	cmd.Stderr = os.Stderr
-	must(t, cmd.Start())
-	var rootHex string
-	_, e = fmt.Fscanf(out, "READY %s\n", &rootHex)
-	if e != nil {
-		cmd.Process.Kill()
-		t.Fatal(e)
-	}
-	must(t, cmd.Process.Kill())
-	_ = cmd.Wait()
-	db, e := Open(dir, Options{MaxLeaves: 4096})
-	must(t, e)
-	defer db.Close()
-	if db.Version() != 2 || fmt.Sprintf("%x", db.Root()) != rootHex {
-		t.Fatal("did not recover checkpoint")
-	}
-	b := make([]byte, 3)
-	db.Read(1, 1, 3, b)
-	if string(b) != "two" {
-		t.Fatal(string(b))
-	}
-	must(t, db.Verify())
-}
-func TestCheckpointTornTail(t *testing.T) {
-	db := openTest(t, Options{CheckpointInterval: 1})
+func TestJournalTornTail(t *testing.T) {
+	db := openTest(t, Options{RetainVersions: 4})
 	r := allocTest(t, db, 100)
 	db.Write(r, 0, []byte("first"))
-	want := commitTest(t, db)
-	must(t, db.Flush())
-	current, e := os.ReadFile(filepath.Join(db.dir, "CURRENT"))
-	must(t, e)
-	db.Write(r, 0, []byte("second"))
 	commitTest(t, db)
+	must(t, db.Checkpoint())
+	db.Write(r, 0, []byte("second"))
+	want := commitTest(t, db)
 	must(t, db.Flush())
 	dir := db.dir
 	must(t, db.Close())
-	// Model a crash before the newer manifest rename becomes durable.
-	must(t, os.WriteFile(filepath.Join(dir, "CURRENT"), current, 0600))
-	f, e := os.OpenFile(filepath.Join(dir, "checkpoint"), os.O_APPEND|os.O_WRONLY, 0600)
+	paths, e := filepath.Glob(filepath.Join(dir, "log", "*.journal"))
+	must(t, e)
+	last := paths[len(paths)-1]
+	// Model a crash in the middle of an append: the partial frame is dropped.
+	f, e := os.OpenFile(last, os.O_APPEND|os.O_WRONLY, 0600)
 	must(t, e)
 	_, e = f.Write([]byte("torn frame"))
 	must(t, e)
 	must(t, f.Close())
 	re, e := Open(dir, Options{MaxLeaves: 4096})
 	must(t, e)
-	if re.Version() != 1 || re.Root() != want {
+	if re.Version() != 2 || re.Root() != want {
 		t.Fatal("tail recovery")
 	}
+	b := make([]byte, 6)
+	re.Read(r, 0, 6, b)
+	if string(b) != "second" {
+		t.Fatal(string(b))
+	}
+	re.Write(r, 0, []byte("third!"))
+	third := commitTest(t, re)
 	must(t, re.Close())
-	f, e = os.OpenFile(filepath.Join(dir, "checkpoint"), os.O_RDWR, 0600)
+	re, e = Open(dir, Options{MaxLeaves: 4096})
 	must(t, e)
-	_, e = f.WriteAt([]byte{99}, 90)
+	if re.Version() != 3 || re.Root() != third {
+		t.Fatal("append after torn tail")
+	}
+	must(t, re.Checkpoint())
+	must(t, re.Close())
+	// Corrupt published image bytes: the recovered root must not verify.
+	f, e = os.OpenFile(filepath.Join(dir, "image"), os.O_RDWR, 0600)
+	must(t, e)
+	_, e = f.WriteAt([]byte{99}, int64(dataStart(4096))+1)
 	must(t, e)
 	must(t, f.Close())
 	if db, e = Open(dir, Options{MaxLeaves: 4096}); e == nil {
@@ -353,11 +310,11 @@ func TestJournal(t *testing.T) {
 		data, e := os.ReadFile(path)
 		must(t, e)
 		for len(data) > 0 {
-			if len(data) < 92 || string(data[:8]) != "PGJNL003" {
+			if len(data) < frameHeader+4 || string(data[:8]) != "PGJNL004" {
 				t.Fatal("header")
 			}
 			n := int(le.Uint64(data[8:]))
-			if n > len(data) || n < 92 {
+			if n > len(data) || n < frameHeader+4 {
 				t.Fatal("length")
 			}
 			frame := data[:n]
@@ -418,7 +375,7 @@ func TestTreeOracle(t *testing.T) {
 }
 
 func TestAllocationHistoryModel(t *testing.T) {
-	db := openTest(t, Options{RetainVersions: 50, CheckpointInterval: 4})
+	db := openTest(t, Options{RetainVersions: 50})
 	rng := rand.New(rand.NewSource(41))
 	type saved struct {
 		root    [32]byte
@@ -564,18 +521,76 @@ func TestMissingManifest(t *testing.T) {
 		t.Fatal("silently reset an existing store")
 	}
 }
-func TestManifestVersion(t *testing.T) {
+func TestManifestRoot(t *testing.T) {
 	db := openTest(t, Options{})
 	dir := db.dir
 	must(t, db.Close())
 	path := filepath.Join(dir, "CURRENT")
 	data, e := os.ReadFile(path)
 	must(t, e)
-	le.PutUint64(data[16:], 9)
-	le.PutUint32(data[60:], checksum(data[:60]))
+	data[40] ^= 1
+	le.PutUint32(data[76:], checksum(data[:76]))
 	must(t, os.WriteFile(path, data, 0600))
 	if reopened, e := Open(dir, Options{MaxLeaves: 4096}); e == nil {
 		reopened.Close()
-		t.Fatal("accepted a mismatched version")
+		t.Fatal("accepted a mismatched root")
 	}
+}
+
+// A stalled applier never blocks Commit until the unapplied journal exceeds the
+// lag bound; past it the disk worker waits, the ring fills and Commit waits.
+func TestApplierLagBound(t *testing.T) {
+	db := openTest(t, Options{RetainVersions: 2})
+	r := allocTest(t, db, 4*LeafSize)
+	commitTest(t, db)
+	must(t, db.Checkpoint())
+	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	defer release()
+	hold := func(point string) {
+		if point == "apply" {
+			<-gate
+		}
+	}
+	db.disk.mu.Lock()
+	db.disk.lagLimit = 1 << 20
+	db.disk.mu.Unlock()
+	db.diskHook.Store(&hold)
+	db.Write(r, 0, []byte{1})
+	commitTest(t, db) // Wakes the applier, which then holds in the hook.
+	must(t, db.Flush())
+	for i := 0; i < 50; i++ {
+		db.Write(r, 0, bytes.Repeat([]byte{byte(i)}, 1000))
+		commitTest(t, db)
+	}
+	must(t, db.Flush())
+	if _, lag := db.disk.applyState(); lag == 0 {
+		t.Fatal("applier was not held")
+	}
+	finished := make(chan error, 1)
+	go func() {
+		var err error
+		for i := 0; i < 400 && err == nil; i++ {
+			db.Write(r, 0, bytes.Repeat([]byte{byte(i)}, 4*LeafSize))
+			_, err = db.Commit()
+		}
+		finished <- err
+	}()
+	select {
+	case err := <-finished:
+		t.Fatalf("Commit ignored the lag bound: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, lag := db.disk.applyState(); lag > 1<<20+64<<10 {
+		t.Fatalf("lag %d exceeds the bound by more than one frame", lag)
+	}
+	db.diskHook.Store(nil)
+	release()
+	must(t, <-finished)
+	must(t, db.Checkpoint())
+	if v, lag := db.disk.applyState(); lag != 0 || v != db.Version() {
+		t.Fatal("checkpoint left a lag")
+	}
+	must(t, db.Verify())
 }

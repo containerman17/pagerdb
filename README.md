@@ -47,15 +47,18 @@ independently of the DB. Do not mutate a View concurrently with its readers.
   later writes, pruning, Rewind and DB.Close. View.Map permits private writes;
   these do not update the View's recorded root. Close a View to release memory.
 - `Rewind(v)` requires no pending writes. It restores the retained version,
-  discards the replaced suffix and checkpoints the result before returning.
+  discards the replaced suffix, journals a rewind frame and waits as Checkpoint
+  does before returning.
   New commits reuse version numbers on the new branch. Existing Views survive.
 - `Proof(r, off)` proves the leaf containing that byte at the committed head;
   pending writes are rejected. `Verify(root, proof)` checks the hash path. This
   proves the leaf, not the region-to-leaf mapping. `DB.Verify()` independently
   rebuilds the root from allocated state and checks the head.
-- `Flush()` drains queued journal/checkpoint work but does not force a sync.
-  `Checkpoint()` synchronously publishes the committed head. `Close()` drains
-  work and discards pending writes; it does **not** create a new checkpoint.
+- `Flush()` waits until queued blocks are written to the journal. It does not
+  fsync and does not wait for the image applier. `Checkpoint()` returns once the
+  journal is synced and the image file and CURRENT cover the committed head.
+  `Close()` drains the journal queue, stops the applier after its current batch
+  and discards pending writes. Unapplied frames replay on the next Open.
 
 ## Design
 
@@ -71,7 +74,8 @@ Handle zero is invalid. The header, capacity, and next handle are committed.
 State and the sparse virtual binary tree use MAP_PRIVATE | MAP_ANON. Linux
 requests MADV_HUGEPAGE; the kernel decides whether to provide huge pages. macOS
 uses ordinary anonymous mappings. Tree nodes in untouched virtual pages use
-precomputed empty hashes. No state file is mapped into the writer's address space.
+precomputed empty hashes. The writer never touches a file mapping: only the
+background applier writes the image file.
 
 Write and Touch append absolute offsets and old bytes to an in-RAM undo buffer,
 then set dirty-leaf bits. They do not deduplicate: the caller can use first-write
@@ -99,35 +103,64 @@ scratch space, and the journal assembly buffer are also reused. A warmed fixed
 workload allocates no heap memory per block, including its hash and journal work;
 buffer growth, checkpoints and epoch rotation can allocate.
 
-A separate disk worker appends one packed write per block with no per-block
-fsync. It also applies snapshots to a private checkpoint image. Every K blocks,
-it appends only leaves changed since the last checkpoint, including allocation
-metadata, and fdatasyncs the checkpoint file (fsync on macOS). A synced temporary
-manifest, atomic rename, and directory fsync publish the complete checkpoint.
-Tree hashes are reconstructed and verified on Open rather than stored twice.
-Checkpoint frames form an incremental image; compaction is deferred.
+A separate disk worker appends one journal frame per block with no per-block
+fsync. A frame holds redo records only: each range the block wrote, with the
+block's final bytes taken from the snapshot. Repeated ranges in one block carry
+the same final bytes, so redo order inside a frame does not matter. A rewind
+frame's redo is every leaf the rewind changed. Old bytes stay in RAM for Mark,
+Undo, View and Rewind; the journal does not keep them.
 
-The disk queue is bounded by the three snapshot slots. If all are still busy,
-Commit waits for the oldest consumer before reusing its storage. Thus a stalled
-disk or checkpoint can apply backpressure after the ring fills. This replaces
-v3's initial unbounded queue and GC-dependent snapshot pool. Disk errors become
-sticky and surface at the next Commit, Flush, Checkpoint, or
-Close. A commit already returned before a disk error may have a valid RAM root
-but no journal record. This phase makes no durability promise for Commit.
+The state image lives in one file, `image`, the size of the state and leaf
+aligned. It is sparse until written. A background applier keeps it current:
+
+1. Take the journal end the disk worker has published.
+2. fdatasync each journal epoch up to that end (fsync on macOS). Only synced
+   frames reach the image, so the image never holds a block the journal lost.
+3. Copy each frame's redo into a MAP_SHARED mapping of the image file. A leaf
+   rewritten by several blocks in one batch reaches the disk once.
+4. msync the image, write `CURRENT.tmp`, fsync it, rename it to CURRENT and
+   fsync the directory. CURRENT names the journal position after the last
+   applied frame, its version and root.
+5. Delete journal epochs that lie entirely before that position.
+
+The applier starts a batch at most once per second, or at once when Checkpoint,
+Rewind or the lag bound waits for it. It never blocks Commit directly. An image
+I/O error arrives as a fault on the mapping; the applier turns it into the sticky
+disk error. Mapped image pages are page cache, not anonymous memory, so the
+process holds one anonymous copy of the state.
+
+Backpressure has two bounded stages. The disk queue is bounded by the three
+snapshot slots: if all are busy, Commit waits for the oldest disk consumer. The
+applier may trail the journal by at most 4 GiB of frames. Past that, the disk
+worker waits before its next append, the snapshot slots fill and Commit waits.
+Below the bound the writer never waits for the applier. Disk errors become sticky
+and surface at the next Commit, Flush, Checkpoint, or Close. A commit already
+returned before a disk error may have a valid RAM root but no journal record.
+Commit makes no durability promise; Checkpoint does.
 
 ## Recovery
 
-Open takes an exclusive process lock, loads frames through CURRENT's published
-end offset, checks CRC-32C, checks allocator bounds, and recomputes the root.
-Unpublished checkpoint tails are truncated. It returns the checkpoint version;
-the caller re-executes later blocks. Process crashes and OS crashes use the same
-path. Journals are retained for future sealing, not replayed during phase 1.
-Reopening starts a fresh journal epoch. A fresh store durably checkpoints version
-zero. Corrupt published data is an error; it is not silently replaced.
+Open takes an exclusive process lock and checks CURRENT. It copies every nonzero
+image leaf into anonymous state (SEEK_DATA skips holes), then replays the redo of
+every journal frame after CURRENT's position, checking each frame's CRC-32C and
+that its parent is the previous version. It hashes the loaded and replayed leaves,
+checks the root of the last frame (or CURRENT's root when no frame follows) and
+checks allocator bounds. Open returns at the last complete frame.
 
-Version 2 files are rejected. There is no v2 migration in phase 1. Capacity must
-match the creation value on Open. The recovery protocol uses file and directory
-sync ordering; physical power-cut testing remains unverified.
+Redo copies are idempotent in order, so a crash at any applier step is safe: the
+image may hold frames after CURRENT's position, and the replay writes every byte
+those frames changed. The first short or damaged frame ends the chain. Open
+truncates that epoch there, removes later epochs, syncs, and starts a new epoch.
+Such frames were never applied, because the applier uses only synced frames. A
+fresh store writes the genesis header to the image and publishes CURRENT at
+version zero. Corrupt image bytes fail the root check; they are not replaced.
+
+A process crash keeps every frame written before it (page cache). An OS crash or
+power loss keeps at least the last Checkpoint, Rewind or applier batch, plus any
+later frames that reached the disk. The protocol uses file and directory sync
+ordering; physical power-cut testing remains unverified. Version 3 stores
+(CURRENT magic `PGCUR003`, `checkpoint` file) and v2 stores are rejected. There
+is no migration. Capacity must match the creation value on Open.
 
 ## Options
 
@@ -136,12 +169,11 @@ sync ordering; physical power-cut testing remains unverified.
 | MaxLeaves | 2^22 | 16 GiB virtual capacity, range 2^8 through 2^32 leaves |
 | Workers | 16 | Hash and snapshot workers, range 1 through 256 |
 | RetainVersions | 32 | Completed block undo transitions retained in RAM |
-| CheckpointInterval | 1000 | Commit versions between automatic checkpoints |
 | EpochBytes | 1 GiB | Journal file cut size; an oversized block stays intact |
 
 Zero selects the default. State capacity changes roots. The other options do not.
-Retention scales with recorded old bytes. Three snapshot buffers and the checkpoint
-image use additional RAM. Allocator growth can require a contiguous free extent
+Retention scales with recorded old bytes. Three snapshot buffers use additional
+RAM; the image file uses page cache, which the kernel can reclaim. Allocator growth can require a contiguous free extent
 and can copy the old region. Views copy state; no lazy fault machinery is used.
 
 ## Disk format (little endian)
@@ -149,30 +181,22 @@ and can copy the old region. Views copy state; no lazy fault machinery is used.
 Each journal file is `log/NNNNNNNNNNNNNNNNNNNN.journal`. A complete block frame is:
 
 ```
-magic "PGJNL003" [8] | frame bytes u64 | version u64 | parent version u64 |
-root [32] | undo bytes u64 | flags u64 | reserved u64 |
-undo payload | CRC-32C u32
+magic "PGJNL004" [8] | frame bytes u64 | version u64 | parent version u64 |
+root [32] | flags u64 | redo payload | CRC-32C u32
 ```
 
-Flags bit zero denotes Rewind. Other bits and reserved bytes are zero. The undo
-payload repeats `absolute offset u64 | old bytes [length] | length u64`. Traverse
-it backward from the final length. Frame size includes the header and checksum.
-CRC covers header plus payload. Frames never cross epoch files. There is no
-per-record checksum, compression, or new-byte image. The parent/version fields
-and rewind flag identify branch changes for a later sealer. After a crash the
-first frame's parent is the recovered checkpoint version. An incomplete final
-frame must be ignored by a future journal reader.
+Flags value 1 denotes Rewind; any other nonzero value is invalid. The redo
+payload repeats `absolute offset u64 | bytes [length] | length u64`. Traverse it
+backward from the final length. Redo bytes are the block's final bytes for each
+written range, or whole leaves for a rewind. Frame size includes the header and
+checksum. CRC covers header and payload. Frames never cross epoch
+files. The parent/version fields and rewind flag identify branch changes. After a
+crash the first new frame's parent is the recovered version.
 
-The checkpoint file appends frames:
-
-```
-magic "PGCKP003" [8] | MaxLeaves u64 | version u64 | leaf count u64 |
-root [32] | (leaf index u32 | leaf bytes [4096])* | CRC-32C u32
-```
-
-Leaf indexes are strictly increasing within a frame. CURRENT is 64 bytes:
-`"PGCUR003" [8] | checkpoint end u64 | version u64 | root [32] |
-reserved u32 | CRC-32C u32`. Its checksum covers the preceding 60 bytes.
+`image` holds the state bytes at their state offsets. CURRENT is 80 bytes:
+`"PGIMG004" [8] | MaxLeaves u64 | journal epoch u64 | journal offset u64 |
+version u64 | root [32] | reserved u32 | CRC-32C u32`. Its checksum covers the
+preceding 76 bytes.
 
 State leaf zero starts with `"PAGER003" [8] | MaxLeaves u64 | next region u64`.
 At offset 4096 the region table holds `(offset u64, size u64)` entries indexed by
@@ -185,19 +209,38 @@ go vet ./...
 go test ./...
 go test -race -count=1 ./...
 PAGERDB_EVM_RETAIN=32 go test -run '^$' -bench '^BenchmarkEVM$' -benchtime=200x
+PAGERDB_CRASH_ITERS=400 go test -run '^TestCrashRecovery$' -count=1 -v
+PAGERDB_MEM_GIB=4 go test -run '^TestMemoryFootprint$' -count=1 -v
 ```
+
+TestCrashRecovery repeatedly SIGKILLs a child process that runs a deterministic
+workload (allocation changes, writes, partial undo, rewinds) with 64 KiB epochs
+and a short applier interval. Each kill lands at a random time or with the child
+frozen at a named step: batch start, mid-apply, after the image sync, after the
+manifest temp write, after the rename, or right after a journal rotation. The
+parent reopens the same directory each time and compares version, root and every
+state byte with an in-process reference that repeats the child's steps. The
+recovered head must not precede the last step the child flushed.
+
+TestMemoryFootprint fills a state of the given size, waits for Checkpoint and
+prints process memory (`/proc/self/status` on Linux, vmmap and footprint on
+macOS). It uses only the public API, so it also measures older commits.
 
 BenchmarkEVM keeps 2,000,000 slots of 64 bytes, 32-byte uint256 counters, 50,000
 read/increment/write operations per block, uniform and normal sigma 1% / 0.1%.
-It includes the final disk drain. Commit timings measure snapshot plus prior hash
+It includes the final journal drain (Flush). After the timer it reports the image
+lag (`max-lag-versions`, `end-lag-versions`, `max-lag-MB`), the Checkpoint
+catch-up time, journal MB/s and, on Linux, peak RssAnon and device write MB/s
+(`PAGERDB_DISK=nvme1n1`). Commit timings measure snapshot plus prior hash
 wait, not blocking root calculation. Dirty-leaf counts use the 4 KiB constant.
 Do not compare these timers directly with v2's blocking Commit/Seal timers.
 
 `go test -run '^$' -bench '^BenchmarkCommitReusable$' -benchmem -benchtime=1000x`
 measures a warmed write/Commit/Flush cycle at 8 and 512 dirty leaves. It includes
-all background work and excludes automatic checkpoints and epoch rotation.
+all journal work and excludes the image applier and epoch rotation.
 `TestCommitAllocations` checks zero allocations across 32 and 256 blocks, worker
-counts and retention settings, with GC between runs. Additional tests check
+counts and retention settings, with GC between runs. It holds the image applier,
+which allocates per batch (about once per second), not per block. Additional tests check
 snapshot growth, unchanged capacity after smaller blocks, full-ring backpressure,
 and rewind after repeated metadata reuse.
 Evidence under `evidence/` predating v3 describes the old implementation.
@@ -205,7 +248,8 @@ Evidence under `evidence/` predating v3 describes the old implementation.
 ## Phase 2
 
 Sealing, sealed epochs/chapters, S3 storage, Export/Import, ViewRoot, history beyond
-the RAM window, checkpoint compaction and journal reclamation remain deferred.
+the RAM window remain deferred. Journal epochs before the image position are
+deleted, so the journal no longer keeps history for a later sealer.
 There is no Seal or pluggable EpochStore in this version. No PR or main-branch
 merge is part of this rewrite.
 

@@ -28,7 +28,7 @@ func evmSlots(t testing.TB, slots int, retain uint64) (*DB, Region) {
 		first += n
 	}
 	commitTest(t, db)
-	must(t, db.Flush())
+	must(t, db.Checkpoint())
 	return db, r
 }
 func evmSlot(rng *rand.Rand, slots int, sigma float64) int {
@@ -78,7 +78,10 @@ func BenchmarkEVM(b *testing.B) {
 			times := make([]float64, b.N)
 			writes := make([]float64, b.N)
 			var dirty int
+			var lag lagMeter
 			b.ResetTimer()
+			disk0, peak := diskWrites(), peakAnon()
+			lag.start(db)
 			start := time.Now()
 			for block := 0; block < b.N; block++ {
 				begin := time.Now()
@@ -94,12 +97,29 @@ func BenchmarkEVM(b *testing.B) {
 				commit := time.Now()
 				_, e := db.Commit()
 				must(b, e)
+				lag.sample(db)
 				writes[block] = commit.Sub(begin).Seconds() * 1000
 				times[block] = time.Since(commit).Seconds() * 1000
 			}
 			must(b, db.Flush())
 			elapsed := time.Since(start)
+			disk1, peakKiB := diskWrites(), peak()
 			b.StopTimer()
+			lag.sample(db)
+			end := lag.last
+			catchup := time.Now()
+			must(b, db.Checkpoint())
+			b.ReportMetric(float64(lag.versions), "max-lag-versions")
+			b.ReportMetric(float64(end), "end-lag-versions")
+			b.ReportMetric(lag.bytes/1e6, "max-lag-MB")
+			b.ReportMetric(time.Since(catchup).Seconds()*1000, "catchup-ms")
+			b.ReportMetric(lag.journal(db)/1e6/elapsed.Seconds(), "journal-MB/s")
+			if disk0 >= 0 {
+				b.ReportMetric(float64(disk1-disk0)/1e6/elapsed.Seconds(), "disk-MB/s")
+			}
+			if peakKiB >= 0 {
+				b.ReportMetric(float64(peakKiB)/1024, "peak-anon-MiB")
+			}
 			b.ReportMetric(float64(b.N*operations)/elapsed.Seconds(), "writes/s")
 			b.ReportMetric(float64(dirty)/float64(b.N), "dirty-leaves/block")
 			for _, series := range []struct {

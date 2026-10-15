@@ -5,8 +5,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Rewind restores a version in the RAM window and durably checkpoints it before
-// returning. It invalidates Marks and mapped slices; existing Views are detached.
+// Rewind restores a version in the RAM window. Before returning it waits until
+// the image file and CURRENT cover the rewind frame (see Checkpoint). It
+// invalidates Marks and mapped slices; existing Views are detached.
 func (db *DB) Rewind(v uint64) error {
 	db.check()
 	if len(db.undo) != 0 {
@@ -33,9 +34,7 @@ func (db *DB) Rewind(v uint64) error {
 	b.version = v
 	b.parent = parent
 	b.rewind = true
-	b.checkpoint = true
 	db.latest = b
-	b.journal = true
 	b.undo = b.undo[:0]
 	b.ready.Add(1)
 	b.persisted.Add(1)
@@ -45,7 +44,7 @@ func (db *DB) Rewind(v uint64) error {
 		return fmt.Errorf("pagerdb: rewind root mismatch")
 	}
 	b.persisted.Wait()
-	return db.disk.failure()
+	return db.disk.checkpoint()
 }
 
 // View owns a private copy. Creation costs the current allocated state plus

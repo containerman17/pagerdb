@@ -2,7 +2,6 @@ package pagerdb
 
 import (
 	"fmt"
-	"math"
 	"runtime"
 	"testing"
 	"time"
@@ -10,10 +9,21 @@ import (
 
 // Warm every metadata, undo, dirty-ID and snapshot slot to its workload size.
 // The measured operation includes the background hash and journal, so their
-// allocations cannot be hidden by returning from Commit early.
+// allocations cannot be hidden by returning from Commit early. The image
+// applier is held: it runs about once per second, not once per block.
 func allocationWorkload(t testing.TB, leaves, workers int, retain uint64) (*DB, func()) {
 	t.Helper()
-	db := openTest(t, Options{Workers: workers, RetainVersions: retain, CheckpointInterval: math.MaxUint64, EpochBytes: 1 << 40})
+	db := openTest(t, Options{Workers: workers, RetainVersions: retain, EpochBytes: 1 << 40})
+	// The applier allocates per batch (paths, manifest). Hold it so only the
+	// per-block path is counted; the release runs before db.Close.
+	gate := make(chan struct{})
+	hold := func(point string) {
+		if point == "apply" {
+			<-gate
+		}
+	}
+	db.diskHook.Store(&hold)
+	t.Cleanup(func() { close(gate) })
 	r := allocTest(t, db, leaves*LeafSize)
 	var value [1]byte
 	step := func() {

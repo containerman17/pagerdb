@@ -89,10 +89,10 @@ func swapMemory() map[string]int64 {
 // only when PAGERDB_SWAP_RUNS is set: comma-separated sigma:mode:goroutines:warmup:blocks,
 // sigma as a fraction of slots (0 = uniform), mode off|pipe|inline|willneed.
 // Warmup blocks run untimed before the measured blocks.
-// pipe touches block k+1's leaves (state, checkpoint image, tree leaf hash) while
+// pipe touches block k+1's leaves (state, tree leaf hash) while
 // block k runs and waits for it at block k+1 start; inline touches block k's
 // leaves inside its timer; willneed issues MADV_WILLNEED instead of touching.
-// Checkpoints are disabled; the journal still runs.
+// The journal and the image applier run as in production.
 func TestSwapEVM(t *testing.T) {
 	spec := os.Getenv("PAGERDB_SWAP_RUNS")
 	if spec == "" {
@@ -110,7 +110,7 @@ func TestSwapEVM(t *testing.T) {
 	}
 	need := (uint64(slots)*64 + 32<<20 + LeafSize - 1) / LeafSize
 	maxLeaves := max(uint64(256), uint64(1)<<bits.Len64(need-1))
-	db := openTest(t, Options{MaxLeaves: maxLeaves, CheckpointInterval: math.MaxUint64})
+	db := openTest(t, Options{MaxLeaves: maxLeaves})
 
 	f0, i0, o0 := swapCounters()
 	start := time.Now()
@@ -135,7 +135,7 @@ func TestSwapEVM(t *testing.T) {
 		slots, maxLeaves, time.Since(start).Seconds(), f1-f0, i1-i0, o1-o0, swapMemory())
 
 	base := db.rangeOf(r, 0, 64)
-	image, tmem, tn := db.disk.image, db.tree.mem, db.tree.n
+	tmem, tn := db.tree.mem, db.tree.n
 	// Prefetch readers race benignly with writers on the same bytes; run without -race.
 	launch := func(list []int, mode string, workers int, wg *sync.WaitGroup) {
 		for w := range workers {
@@ -150,11 +150,10 @@ func TestSwapEVM(t *testing.T) {
 					if mode == "willneed" {
 						lp, np := leaf*LeafSize, node&^(LeafSize-1)
 						_ = unix.Madvise(db.state[lp:lp+LeafSize], unix.MADV_WILLNEED)
-						_ = unix.Madvise(image[lp:lp+LeafSize], unix.MADV_WILLNEED)
 						_ = unix.Madvise(tmem[np:np+LeafSize], unix.MADV_WILLNEED)
 						continue
 					}
-					sum += db.state[p] + image[p] + tmem[node]
+					sum += db.state[p] + tmem[node]
 				}
 				swapSink.Add(uint64(sum))
 			}()
@@ -194,6 +193,9 @@ func TestSwapEVM(t *testing.T) {
 		var writes, commits, waits []float64
 		var faults, ins, outs int64
 		var measured time.Time
+		var lag lagMeter
+		var disk0 int64
+		var peak func() int64
 		for block := 0; block < warmup+blocks; block++ {
 			cur := next
 			next = gen()
@@ -201,6 +203,9 @@ func TestSwapEVM(t *testing.T) {
 			begin := time.Now()
 			if block == warmup {
 				measured = begin
+				disk0 = diskWrites()
+				lag.start(db)
+				peak = peakAnon()
 			}
 			switch mode {
 			case "pipe", "willneed":
@@ -218,6 +223,9 @@ func TestSwapEVM(t *testing.T) {
 			_, err := db.Commit()
 			must(t, err)
 			end := time.Now()
+			if block >= warmup {
+				lag.sample(db)
+			}
 			fb, ib, ob := swapCounters()
 			w, c, wt := commit.Sub(begin).Seconds()*1000, end.Sub(commit).Seconds()*1000, waited.Sub(begin).Seconds()*1000
 			if csv != nil {
@@ -231,6 +239,7 @@ func TestSwapEVM(t *testing.T) {
 		wg.Wait()
 		must(t, db.Flush())
 		elapsed := time.Since(measured)
+		disk1, peakKiB := diskWrites(), peak()
 		runtime.ReadMemStats(&gc1)
 		pct := func(v []float64, p float64) float64 {
 			slices.Sort(v)
@@ -246,7 +255,10 @@ func TestSwapEVM(t *testing.T) {
 			"pswpin_per_block":  float64(ins) / float64(blocks),
 			"pswpout_per_block": float64(outs) / float64(blocks),
 			"gc_cycles":         gc1.NumGC - gc0.NumGC, "heap_sys_MiB": gc1.HeapSys >> 20,
-			"mem": swapMemory(),
+			"mem": swapMemory(), "peak_anon_KiB": peakKiB,
+			"max_lag_versions": lag.versions, "max_lag_MB": lag.bytes / 1e6,
+			"journal_MB_per_s":    lag.journal(db) / 1e6 / elapsed.Seconds(),
+			"disk_write_MB_per_s": float64(disk1-disk0) / 1e6 / elapsed.Seconds(),
 		}
 		out, _ := json.Marshal(res)
 		t.Logf("SWAPRESULT %s", out)

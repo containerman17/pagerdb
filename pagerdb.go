@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
@@ -37,11 +38,10 @@ type Region uint32
 
 // Options fixes state capacity at creation. Other settings can change on Open.
 type Options struct {
-	MaxLeaves          uint64
-	RetainVersions     uint64 // Default 32 completed blocks of undo.
-	Workers            int    // Default 16 hash and snapshot workers.
-	CheckpointInterval uint64 // Default 1000 blocks.
-	EpochBytes         int64  // Default 1 GiB; a single oversized block stays intact.
+	MaxLeaves      uint64
+	RetainVersions uint64 // Default 32 completed blocks of undo.
+	Workers        int    // Default 16 hash and snapshot workers.
+	EpochBytes     int64  // Default 1 GiB; a single oversized block stays intact.
 }
 
 const snapshotCount = 3
@@ -53,19 +53,17 @@ type snapshotSlot struct {
 }
 
 type block struct {
-	version    uint64
-	parent     uint64
-	undo       []byte
-	ids        []uint32
-	data       []byte
-	root       [32]byte
-	ready      sync.WaitGroup
-	persisted  sync.WaitGroup
-	checkpoint bool
-	rewind     bool
-	retained   bool
-	journal    bool
-	snapshot   *snapshotSlot
+	version   uint64
+	parent    uint64
+	undo      []byte
+	ids       []uint32
+	data      []byte
+	root      [32]byte
+	ready     sync.WaitGroup
+	persisted sync.WaitGroup
+	rewind    bool
+	retained  bool
+	snapshot  *snapshotSlot
 }
 
 // DB methods and mapped slices require a single owner. This includes RootAt,
@@ -102,6 +100,7 @@ type DB struct {
 	// Test hooks run on background workers, before touching their job.
 	beforeHash func()
 	beforeDisk func()
+	diskHook   atomic.Pointer[func(point string)] // Called at named disk and applier steps.
 }
 
 func defaults(o Options) (Options, error) {
@@ -120,9 +119,6 @@ func defaults(o Options) (Options, error) {
 	if o.Workers < 1 || o.Workers > 256 {
 		return o, fmt.Errorf("pagerdb: Workers must be in [1, 256]")
 	}
-	if o.CheckpointInterval == 0 {
-		o.CheckpointInterval = 1000
-	}
 	if o.EpochBytes == 0 {
 		o.EpochBytes = 1 << 30
 	}
@@ -132,8 +128,8 @@ func defaults(o Options) (Options, error) {
 	return o, nil
 }
 
-// Open loads and verifies the last published checkpoint. Later journal blocks
-// are deliberately not replayed: the caller re-executes them.
+// Open loads the image file, replays the journal after the image position and
+// verifies the recovered root. It returns at the last complete journal frame.
 func Open(dir string, o Options) (_ *DB, err error) {
 	o, err = defaults(o)
 	if err != nil {
@@ -188,6 +184,7 @@ func Open(dir string, o Options) (_ *DB, err error) {
 	db.hashDone = make(chan struct{})
 	go db.hashLoop()
 	go db.disk.run()
+	go db.disk.apply()
 	return db, nil
 }
 func (db *DB) check() {
@@ -305,10 +302,8 @@ func (db *DB) Commit() (uint64, error) {
 	db.undoLast = len(db.undo)
 	db.undo, b.undo = b.undo[:0], db.undo
 	db.generation++
-	b.checkpoint = b.version%db.o.CheckpointInterval == 0
 	b.ready.Add(1)
 	b.persisted.Add(1)
-	b.journal = true
 	b.retained = true
 	db.latest = b
 	db.history = append(db.history, b)
@@ -337,9 +332,7 @@ func (db *DB) acquireBlock() *block {
 		}
 		b.ready.Wait()
 		b.persisted.Wait()
-		b.checkpoint = false
 		b.rewind = false
-		b.journal = false
 		return b
 	}
 }
@@ -348,15 +341,7 @@ func (db *DB) snapshot() *block {
 	db.nextSnapshot = (db.nextSnapshot + 1) % len(db.snapshots)
 	slot.done.Wait()
 	b := db.acquireBlock()
-	slot.ids = slot.ids[:0]
-	for word := db.dirtyStart; word < db.dirtyEnd; word++ {
-		for pending := db.dirtyBits[word]; pending != 0; pending &= pending - 1 {
-			slot.ids = append(slot.ids, uint32(word*64+uint64(bits.TrailingZeros64(pending))))
-		}
-		db.dirtyBits[word] = 0
-	}
-	db.dirtyStart = uint64(len(db.dirtyBits))
-	db.dirtyEnd = 0
+	slot.ids = db.takeDirty(slot.ids[:0])
 	size := len(slot.ids) * LeafSize
 	if cap(slot.data) < size {
 		// Geometric growth avoids reallocating for each small new high-water mark.
@@ -372,6 +357,19 @@ func (db *DB) snapshot() *block {
 	b.snapshot = slot
 	slot.done.Add(1)
 	return b
+}
+
+// takeDirty appends dirty leaf IDs in order to ids and clears the bitmap.
+func (db *DB) takeDirty(ids []uint32) []uint32 {
+	for word := db.dirtyStart; word < db.dirtyEnd; word++ {
+		for pending := db.dirtyBits[word]; pending != 0; pending &= pending - 1 {
+			ids = append(ids, uint32(word*64+uint64(bits.TrailingZeros64(pending))))
+		}
+		db.dirtyBits[word] = 0
+	}
+	db.dirtyStart = uint64(len(db.dirtyBits))
+	db.dirtyEnd = 0
+	return ids
 }
 func (db *DB) waitHash() {
 	if db.latest != nil {
@@ -427,7 +425,8 @@ func (db *DB) RootAt(v uint64) ([32]byte, error) {
 	return [32]byte{}, ErrWindow
 }
 
-// Flush waits for queued disk work. It does not force a checkpoint or fsync.
+// Flush waits until queued blocks are written to the journal. It does not fsync
+// and does not wait for the image applier.
 func (db *DB) Flush() error {
 	db.check()
 	db.waitHash()
@@ -437,26 +436,23 @@ func (db *DB) Flush() error {
 	return db.disk.failure()
 }
 
-// Checkpoint publishes the current committed version durably. Ordinary commits
-// schedule this automatically every CheckpointInterval blocks.
+// Checkpoint returns once the journal is synced and the image file and CURRENT
+// cover the committed head. The background applier does the same work on its
+// own, about once per applyInterval.
 func (db *DB) Checkpoint() error {
 	db.check()
 	if len(db.undo) != 0 {
 		return ErrPending
 	}
-	db.waitHash()
-	b := db.acquireBlock()
-	b.version = db.version
-	b.root = db.Root()
-	b.checkpoint = true
-	b.persisted.Add(1)
-	db.disk.enqueue(b)
-	b.persisted.Wait()
-	return db.disk.failure()
+	if err := db.Flush(); err != nil {
+		return err
+	}
+	return db.disk.checkpoint()
 }
 
 // Close discards uncommitted writes, drains background work, and releases memory.
-// It does not add a checkpoint. Call Checkpoint explicitly when required.
+// It stops the applier after its current batch; Open replays the rest of the
+// journal. Call Checkpoint first to leave a fully applied image.
 func (db *DB) Close() error {
 	if db.closed {
 		return nil
@@ -481,7 +477,7 @@ func (db *DB) release() error {
 	db.dirtyBits = nil
 	if db.disk != nil {
 		db.disk.record = nil
-		db.disk.changed = nil
+		db.disk.frame = nil
 	}
 	var errs []error
 	if db.pool != nil {

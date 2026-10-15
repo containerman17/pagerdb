@@ -1,315 +1,593 @@
 package pagerdb
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sync"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
 
 var crcTable = crc32.MakeTable(crc32.Castagnoli)
 
-const checkpointHeader = 64
+const (
+	frameHeader   = 72
+	manifestBytes = 80
+	// maxApplyLag bounds the journal bytes the image file may trail. Past it the
+	// disk worker stops appending, the three snapshot slots fill and Commit waits.
+	maxApplyLag = 4 << 30
+)
+
+// applyInterval lets one image write cover a leaf rewritten by many blocks.
+// Crash tests shorten it before Open.
+var applyInterval = time.Second
+
+var (
+	errTorn   = errors.New("pagerdb: damaged journal frame")
+	errRecord = errors.New("pagerdb: invalid journal record")
+)
+
+type position struct {
+	epoch  uint64
+	offset int64
+}
 
 type diskWriter struct {
-	db           *DB
-	image        []byte
-	changed      []uint32
-	bits         []uint64
-	file         *os.File
-	journal      *os.File
-	journalBytes int64
-	epoch        uint64
-	end          int64
-	mu           sync.Mutex
-	cond         *sync.Cond
-	queue        [snapshotCount + 1]*block
-	queueHead    int
-	queueLength  int
-	record       []byte
-	stopping     bool
-	err          error
-	done         chan struct{}
+	db          *DB
+	journal     *os.File
+	record      []byte
+	queue       [snapshotCount + 1]*block
+	queueHead   int
+	queueLength int
+	done        chan struct{}
+	// mu guards the queue, the journal end, the byte counters and the stop flags.
+	mu             sync.Mutex
+	cond           *sync.Cond
+	epoch          uint64
+	journalBytes   int64
+	written        int64 // journal bytes after the image position at Open, plus appends
+	applied        int64 // the part of written that the published image covers
+	appliedVersion uint64
+	waiters        int // Checkpoint or a lag-bound append wants the applier now
+	stopping       bool
+	applyStop      bool
+	err            error
+	lagLimit       int64
+	// The applier goroutine owns these after Open.
+	image     *os.File
+	mapped    []byte // MAP_SHARED image file
+	pos       position
+	oldest    uint64
+	reader    *os.File
+	frame     []byte
+	next      time.Time
+	timer     *time.Timer
+	applyDone chan struct{}
+}
+
+func (d *diskWriter) journalPath(epoch uint64) string {
+	return filepath.Join(d.db.dir, "log", fmt.Sprintf("%020d.journal", epoch))
+}
+func (d *diskWriter) hook(point string) {
+	if h := d.db.diskHook.Load(); h != nil {
+		(*h)(point)
+	}
 }
 
 func openDisk(db *DB) (_ *diskWriter, err error) {
-	d := &diskWriter{db: db, bits: make([]uint64, len(db.dirtyBits)), done: make(chan struct{})}
+	d := &diskWriter{db: db, done: make(chan struct{}), applyDone: make(chan struct{}), lagLimit: maxApplyLag}
 	d.cond = sync.NewCond(&d.mu)
 	defer func() {
 		if err != nil {
-			if d.file != nil {
-				d.file.Close()
-			}
-			if d.journal != nil {
-				d.journal.Close()
-			}
-			if d.image != nil {
-				unix.Munmap(d.image)
-			}
+			d.closeFiles()
 		}
 	}()
-	d.image, err = anonymous(len(db.state))
-	if err != nil {
+	logDir := filepath.Join(db.dir, "log")
+	manifest, err := os.ReadFile(filepath.Join(db.dir, "CURRENT"))
+	fresh := errors.Is(err, os.ErrNotExist)
+	if err != nil && !fresh {
 		return nil, err
 	}
-	d.file, err = os.OpenFile(filepath.Join(db.dir, "checkpoint"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
+	if !fresh && (len(manifest) != manifestBytes || string(manifest[:8]) != "PGIMG004" || crc32.Checksum(manifest[:76], crcTable) != le.Uint32(manifest[76:])) {
+		return nil, fmt.Errorf("pagerdb: invalid image manifest")
 	}
-	manifest, e := os.ReadFile(filepath.Join(db.dir, "CURRENT"))
-	if e == nil {
-		if len(manifest) != 64 || string(manifest[:8]) != "PGCUR003" || crc32.Checksum(manifest[:60], crcTable) != le.Uint32(manifest[60:]) {
-			return nil, fmt.Errorf("pagerdb: invalid checkpoint manifest")
-		}
-		d.end = int64(le.Uint64(manifest[8:]))
-		if d.end < 68 {
-			return nil, fmt.Errorf("pagerdb: invalid checkpoint end")
-		}
-		st, e := d.file.Stat()
-		if e != nil {
+	if fresh {
+		entries, e := os.ReadDir(logDir)
+		if e != nil && !errors.Is(e, os.ErrNotExist) {
 			return nil, e
 		}
-		if st.Size() < d.end {
-			return nil, io.ErrUnexpectedEOF
-		}
-		if err = d.load(manifest); err != nil {
-			return nil, err
-		}
-		db.version = le.Uint64(manifest[16:])
-		want := [32]byte(manifest[24:56])
-		// d.changed contains each restored leaf once; rebuild from final state.
-		slices.Sort(d.changed)
-		for first := 0; first < len(d.changed); first += 1024 {
-			ids := d.changed[first:min(first+1024, len(d.changed))]
-			data := make([]byte, len(ids)*LeafSize)
-			for i, id := range ids {
-				off := uint64(id) * LeafSize
-				copy(data[i*LeafSize:], db.state[off:off+LeafSize])
-			}
-			db.tree.update(ids, data, db.pool)
-		}
-		if db.tree.root() != want {
-			return nil, fmt.Errorf("pagerdb: checkpoint root mismatch")
-		}
-		if err = validateAlloc(db.state, db.o.MaxLeaves); err != nil {
-			return nil, err
-		}
-		d.resetChanged()
-	} else if errors.Is(e, os.ErrNotExist) {
-		entries, readErr := os.ReadDir(filepath.Join(db.dir, "log"))
-		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			return nil, readErr
-		}
 		if len(entries) != 0 {
-			return nil, fmt.Errorf("pagerdb: missing checkpoint manifest in an existing store")
+			return nil, fmt.Errorf("pagerdb: missing image manifest in an existing store")
 		}
-		// A checkpoint tail without CURRENT was never published. Start at genesis.
+	}
+	if d.image, err = os.OpenFile(filepath.Join(db.dir, "image"), os.O_CREATE|os.O_RDWR, 0600); err != nil {
+		return nil, err
+	}
+	if fresh {
+		// An image without CURRENT was never published. Start from a sparse zero file.
+		if err = d.image.Truncate(0); err == nil {
+			err = d.image.Truncate(int64(len(db.state)))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	st, err := d.image.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if st.Size() != int64(len(db.state)) {
+		return nil, fmt.Errorf("pagerdb: image size differs from capacity")
+	}
+	if d.mapped, err = unix.Mmap(int(d.image.Fd()), 0, len(db.state), unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED); err != nil {
+		return nil, err
+	}
+	if err = os.MkdirAll(logDir, 0755); err != nil {
+		return nil, err
+	}
+	if fresh {
 		copy(db.state, "PAGER003")
 		le.PutUint64(db.state[8:], db.o.MaxLeaves)
 		le.PutUint64(db.state[16:], 1)
-		copy(d.image[:LeafSize], db.state[:LeafSize])
-		d.mark(0)
-		db.tree.update([]uint32{0}, db.state[:LeafSize], db.pool)
-		if err = d.checkpoint(0, db.tree.root()); err != nil {
-			return nil, err
-		}
+		copy(d.mapped, db.state[:LeafSize])
+		db.markDirty(0, LeafSize)
+		db.hashDirty()
+		d.pos, d.oldest = position{1, 0}, 1
+		err = d.publish(0, db.tree.root())
 	} else {
-		return nil, e
+		err = d.recover(manifest)
 	}
-	if err = d.file.Truncate(d.end); err != nil {
+	if err != nil {
 		return nil, err
-	}
-	if _, err = d.file.Seek(d.end, io.SeekStart); err != nil {
-		return nil, err
-	}
-	if err = os.MkdirAll(filepath.Join(db.dir, "log"), 0755); err != nil {
-		return nil, err
-	}
-	entries, e := os.ReadDir(filepath.Join(db.dir, "log"))
-	if e != nil {
-		return nil, e
-	}
-	for _, ent := range entries {
-		var n uint64
-		if _, e := fmt.Sscanf(ent.Name(), "%020d.journal", &n); e == nil {
-			d.epoch = max(d.epoch, n)
-		}
 	}
 	if err = d.rotate(); err != nil {
 		return nil, err
 	}
 	return d, nil
 }
-func (d *diskWriter) mark(id uint32) {
-	mask := uint64(1) << (id % 64)
-	if d.bits[id/64]&mask == 0 {
-		d.bits[id/64] |= mask
-		d.changed = append(d.changed, id)
+
+// recover loads the image, replays every journal frame after its position and
+// checks the final root. The first damaged frame ends the chain: the applier
+// never used it, so it and every later epoch are removed before new appends.
+func (d *diskWriter) recover(m []byte) error {
+	db := d.db
+	if le.Uint64(m[8:]) != db.o.MaxLeaves {
+		return fmt.Errorf("pagerdb: capacity differs from the store")
 	}
-}
-func (d *diskWriter) resetChanged() {
-	for _, id := range d.changed {
-		d.bits[id/64] &= ^(uint64(1) << (id % 64))
+	d.pos = position{le.Uint64(m[16:]), int64(le.Uint64(m[24:]))}
+	version, root := le.Uint64(m[32:]), [32]byte(m[40:72])
+	if d.pos.epoch == 0 || d.pos.offset < 0 {
+		return fmt.Errorf("pagerdb: invalid image position")
 	}
-	d.changed = d.changed[:0]
+	d.appliedVersion, d.oldest = version, d.pos.epoch
+	if err := d.load(); err != nil {
+		return err
+	}
+	e, off := d.pos.epoch, d.pos.offset
+	for ; ; e, off = e+1, 0 {
+		f, err := os.OpenFile(d.journalPath(e), os.O_RDWR, 0)
+		if errors.Is(err, os.ErrNotExist) {
+			if off != 0 {
+				return fmt.Errorf("pagerdb: journal at the image position is missing")
+			}
+			break
+		}
+		if err != nil {
+			return err
+		}
+		end, torn, err := d.replay(f, off, &version, &root)
+		if err == nil && torn {
+			err = errors.Join(f.Truncate(end), f.Sync())
+		}
+		if err = errors.Join(err, f.Close()); err != nil {
+			return err
+		}
+		if torn {
+			e++
+			break
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(db.dir, "log"))
+	if err != nil {
+		return err
+	}
+	removed := false
+	for _, ent := range entries {
+		var n uint64
+		if _, err := fmt.Sscanf(ent.Name(), "%020d.journal", &n); err == nil && (n < d.pos.epoch || n >= e) {
+			if err = os.Remove(filepath.Join(db.dir, "log", ent.Name())); err != nil {
+				return err
+			}
+			removed = true
+		}
+	}
+	// New epochs reuse removed names, so the removals must be durable first.
+	if removed {
+		if err = syncDir(filepath.Join(db.dir, "log")); err != nil {
+			return err
+		}
+	}
+	d.epoch = e - 1
+	db.hashDirty()
+	if db.tree.root() != root {
+		return fmt.Errorf("pagerdb: recovered root mismatch")
+	}
+	if err = validateAlloc(db.state, db.o.MaxLeaves); err != nil {
+		return err
+	}
+	db.version = version
+	return nil
 }
-func (d *diskWriter) load(manifest []byte) error {
-	var off int64
-	var header [64]byte
-	var rec [4 + LeafSize]byte
-	for off < d.end {
-		if d.end-off < 68 {
-			return io.ErrUnexpectedEOF
+
+// load copies every nonzero image leaf into state. SEEK_DATA skips sparse holes.
+func (d *diskWriter) load() error {
+	fd, size := int(d.image.Fd()), int64(len(d.mapped))
+	var zero [LeafSize]byte
+	for off := int64(0); off < size; {
+		start, err := unix.Seek(fd, off, unix.SEEK_DATA)
+		if errors.Is(err, unix.ENXIO) {
+			break
 		}
-		if _, e := d.file.ReadAt(header[:], off); e != nil {
-			return e
+		end := size
+		if err != nil {
+			start = off // No SEEK_DATA support: scan the rest.
+		} else if end, err = unix.Seek(fd, start, unix.SEEK_HOLE); err != nil {
+			return err
 		}
-		off += 64
-		if string(header[:8]) != "PGCKP003" || le.Uint64(header[8:]) != d.db.o.MaxLeaves {
-			return fmt.Errorf("pagerdb: checkpoint format or capacity mismatch")
-		}
-		count := le.Uint64(header[24:])
-		if count > d.db.o.MaxLeaves || count > uint64((d.end-off-4)/(4+LeafSize)) {
-			return fmt.Errorf("pagerdb: checkpoint count out of bounds")
-		}
-		h := crc32.New(crcTable)
-		h.Write(header[:])
-		var prev uint32
-		for i := uint64(0); i < count; i++ {
-			if _, e := d.file.ReadAt(rec[:], off); e != nil {
-				return e
+		start -= start % LeafSize
+		end = min(size, int64(align(uint64(end))))
+		for p := start; p < end; p += LeafSize {
+			if leaf := d.mapped[p : p+LeafSize]; !bytes.Equal(leaf, zero[:]) {
+				copy(d.db.state[p:], leaf)
+				d.db.markDirty(uint64(p), LeafSize)
 			}
-			off += int64(len(rec))
-			h.Write(rec[:])
-			id := le.Uint32(rec[:])
-			if uint64(id) >= d.db.o.MaxLeaves || (i > 0 && id <= prev) {
-				return fmt.Errorf("pagerdb: invalid checkpoint leaf order")
-			}
-			prev = id
-			p := uint64(id) * LeafSize
-			copy(d.db.state[p:p+LeafSize], rec[4:])
-			copy(d.image[p:p+LeafSize], rec[4:])
-			d.mark(id)
 		}
-		var sum [4]byte
-		if _, e := d.file.ReadAt(sum[:], off); e != nil {
-			return e
-		}
-		off += 4
-		if le.Uint32(sum[:]) != h.Sum32() {
-			return fmt.Errorf("pagerdb: checkpoint checksum mismatch")
-		}
-		if off == d.end && (le.Uint64(header[16:]) != le.Uint64(manifest[16:]) || [32]byte(header[32:]) != [32]byte(manifest[24:56])) {
-			return fmt.Errorf("pagerdb: checkpoint header differs from manifest")
-		}
+		off = end
 	}
 	return nil
 }
-func (d *diskWriter) checkpoint(v uint64, root [32]byte) error {
-	slices.Sort(d.changed)
-	// Incremental frames are immutable once CURRENT publishes their end offset.
-	header := make([]byte, 64)
-	copy(header, "PGCKP003")
-	le.PutUint64(header[8:], d.db.o.MaxLeaves)
-	le.PutUint64(header[16:], v)
-	le.PutUint64(header[24:], uint64(len(d.changed)))
-	copy(header[32:], root[:])
-	if _, err := d.file.Seek(d.end, io.SeekStart); err != nil {
-		return err
+
+// replay applies one epoch's frames from off to state. It returns the end of the
+// valid frames and whether a damaged frame follows them.
+func (d *diskWriter) replay(f *os.File, off int64, version *uint64, root *[32]byte) (int64, bool, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return off, false, err
 	}
-	h := crc32.New(crcTable)
-	write := func(b []byte) error { h.Write(b); _, err := d.file.Write(b); return err }
-	if err := write(header); err != nil {
-		return err
+	if off > st.Size() {
+		return off, false, fmt.Errorf("pagerdb: journal shorter than the image position")
 	}
-	// Batch checkpoint records to avoid one syscall per leaf.
-	buf := make([]byte, 0, (4+LeafSize)*256)
-	for i, id := range d.changed {
-		buf = le.AppendUint32(buf, id)
-		p := uint64(id) * LeafSize
-		buf = append(buf, d.image[p:p+LeafSize]...)
-		if len(buf) == cap(buf) || i == len(d.changed)-1 {
-			if err := write(buf); err != nil {
-				return err
-			}
-			buf = buf[:0]
+	db := d.db
+	for off < st.Size() {
+		frame, err := d.readFrame(f, off, st.Size())
+		if errors.Is(err, errTorn) {
+			return off, true, nil
 		}
+		if err != nil {
+			return off, false, err
+		}
+		if le.Uint64(frame[24:]) != *version {
+			return off, false, fmt.Errorf("pagerdb: journal parent mismatch")
+		}
+		err = walk(redoOf(frame), uint64(len(db.state)), func(p uint64, b []byte) {
+			copy(db.state[p:], b)
+			db.markDirty(p, uint64(len(b)))
+		})
+		if err != nil {
+			return off, false, err
+		}
+		*version, *root = le.Uint64(frame[16:]), [32]byte(frame[32:64])
+		d.written += int64(len(frame))
+		off += int64(len(frame))
 	}
-	if _, err := d.file.Write(le.AppendUint32(nil, h.Sum32())); err != nil {
+	return off, false, nil
+}
+
+// Frame: magic "PGJNL004", frame bytes, version, parent version, root, flags
+// (1 = rewind), redo records, CRC-32C of all before it.
+func (d *diskWriter) readFrame(f *os.File, off, end int64) ([]byte, error) {
+	if end-off < frameHeader+4 {
+		return nil, errTorn
+	}
+	b := slices.Grow(d.frame[:0], frameHeader)[:frameHeader]
+	if _, err := f.ReadAt(b, off); err != nil {
+		return nil, err
+	}
+	n := le.Uint64(b[8:])
+	if string(b[:8]) != "PGJNL004" || n > uint64(end-off) || n < frameHeader+4 || le.Uint64(b[64:]) > 1 {
+		return nil, errTorn
+	}
+	b = slices.Grow(b, int(n)-frameHeader)[:n]
+	d.frame = b
+	if _, err := f.ReadAt(b[frameHeader:], off+frameHeader); err != nil {
+		return nil, err
+	}
+	if crc32.Checksum(b[:n-4], crcTable) != le.Uint32(b[n-4:]) {
+		return nil, errTorn
+	}
+	return b, nil
+}
+func redoOf(frame []byte) []byte { return frame[frameHeader : len(frame)-4] }
+
+// walk visits undo-format records backward, checking bounds before each visit.
+func walk(records []byte, limit uint64, fn func(off uint64, b []byte)) error {
+	for end := uint64(len(records)); end > 0; {
+		if end < 16 {
+			return errRecord
+		}
+		n := le.Uint64(records[end-8:])
+		if n > end-16 {
+			return errRecord
+		}
+		start := end - 16 - n
+		off := le.Uint64(records[start:])
+		if off > limit || n > limit-off {
+			return errRecord
+		}
+		fn(off, records[start+8:end-8])
+		end = start
+	}
+	return nil
+}
+
+// publish makes the image durable, then names it in CURRENT with an atomic rename.
+func (d *diskWriter) publish(version uint64, root [32]byte) error {
+	if err := unix.Msync(d.mapped, unix.MS_SYNC); err != nil {
 		return err
 	}
-	if err := dataSync(int(d.file.Fd())); err != nil {
-		return err
-	}
-	end := d.end + 64 + int64(len(d.changed))*(4+LeafSize) + 4
-	manifest := make([]byte, 64)
-	copy(manifest, "PGCUR003")
-	le.PutUint64(manifest[8:], uint64(end))
-	le.PutUint64(manifest[16:], v)
-	copy(manifest[24:], root[:])
-	le.PutUint32(manifest[60:], crc32.Checksum(manifest[:60], crcTable))
+	d.hook("image-synced")
+	m := make([]byte, manifestBytes)
+	copy(m, "PGIMG004")
+	le.PutUint64(m[8:], d.db.o.MaxLeaves)
+	le.PutUint64(m[16:], d.pos.epoch)
+	le.PutUint64(m[24:], uint64(d.pos.offset))
+	le.PutUint64(m[32:], version)
+	copy(m[40:], root[:])
+	le.PutUint32(m[76:], crc32.Checksum(m[:76], crcTable))
 	path := filepath.Join(d.db.dir, "CURRENT.tmp")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	_, err = f.Write(manifest)
+	_, err = f.Write(m)
 	if err == nil {
 		err = f.Sync()
 	}
-	err = errors.Join(err, f.Close())
-	if err != nil {
+	if err = errors.Join(err, f.Close()); err != nil {
 		return err
 	}
+	d.hook("manifest-written")
 	if err = os.Rename(path, filepath.Join(d.db.dir, "CURRENT")); err != nil {
 		return err
 	}
-	dir, err := os.Open(d.db.dir)
+	d.hook("manifest-renamed")
+	return syncDir(d.db.dir)
+}
+func syncDir(path string) error {
+	dir, err := os.Open(path)
 	if err != nil {
 		return err
 	}
-	err = dir.Sync()
-	err = errors.Join(err, dir.Close())
-	if err != nil {
+	return errors.Join(dir.Sync(), dir.Close())
+}
+
+// apply runs the background applier. It syncs the journal, copies the redo of
+// the synced frames into the image file, syncs the image and publishes CURRENT.
+// It starts a batch at most once per applyInterval unless someone waits for it.
+func (d *diskWriter) apply() {
+	defer close(d.applyDone)
+	debug.SetPanicOnFault(true) // An image I/O error arrives as a fault on the mapping.
+	d.timer = time.AfterFunc(time.Hour, func() { d.mu.Lock(); d.cond.Broadcast(); d.mu.Unlock() })
+	for {
+		d.mu.Lock()
+		for {
+			if d.applyStop || d.err != nil {
+				d.mu.Unlock()
+				return
+			}
+			work := d.pos != position{d.epoch, d.journalBytes}
+			if work && (d.waiters > 0 || !time.Now().Before(d.next)) {
+				break
+			}
+			if work {
+				d.timer.Reset(time.Until(d.next))
+			}
+			d.cond.Wait()
+		}
+		epoch, end := d.epoch, d.journalBytes
+		d.mu.Unlock()
+		if err := d.batch(epoch, end); err != nil {
+			d.mu.Lock()
+			d.err = errors.Join(d.err, err)
+			d.cond.Broadcast()
+			d.mu.Unlock()
+			return
+		}
+	}
+}
+func (d *diskWriter) batch(epoch uint64, end int64) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("pagerdb: image applier: %v", r)
+		}
+	}()
+	d.hook("apply")
+	var version uint64
+	var root [32]byte
+	var applied int64
+	for {
+		if d.reader == nil {
+			if d.reader, err = os.Open(d.journalPath(d.pos.epoch)); err != nil {
+				return err
+			}
+			// A new epoch's directory entry must be durable before its frames are applied.
+			if err = syncDir(filepath.Join(d.db.dir, "log")); err != nil {
+				return err
+			}
+		}
+		limit := end
+		if d.pos.epoch < epoch {
+			st, err := d.reader.Stat()
+			if err != nil {
+				return err
+			}
+			limit = st.Size()
+		}
+		if d.pos.offset < limit {
+			// Only frames covered by this sync may reach the image.
+			if err = dataSync(int(d.reader.Fd())); err != nil {
+				return err
+			}
+		}
+		for d.pos.offset < limit {
+			frame, err := d.readFrame(d.reader, d.pos.offset, limit)
+			if err != nil {
+				return err
+			}
+			if err = walk(redoOf(frame), uint64(len(d.mapped)), func(p uint64, b []byte) { copy(d.mapped[p:], b) }); err != nil {
+				return err
+			}
+			version, root = le.Uint64(frame[16:]), [32]byte(frame[32:64])
+			d.pos.offset += int64(len(frame))
+			applied += int64(len(frame))
+			d.hook("applying")
+		}
+		if d.pos.epoch == epoch {
+			break
+		}
+		err = d.reader.Close()
+		d.reader = nil
+		d.pos = position{d.pos.epoch + 1, 0}
+		if err != nil {
+			return err
+		}
+	}
+	if applied == 0 {
+		return nil
+	}
+	d.next = time.Now().Add(applyInterval)
+	if err = d.publish(version, root); err != nil {
 		return err
 	}
-	d.end = end
-	d.resetChanged()
+	for ; d.oldest < d.pos.epoch; d.oldest++ {
+		if err = os.Remove(d.journalPath(d.oldest)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	d.mu.Lock()
+	d.applied += applied
+	d.appliedVersion = version
+	d.cond.Broadcast()
+	d.mu.Unlock()
 	return nil
 }
+
+// checkpoint waits until the published image covers every appended frame.
+func (d *diskWriter) checkpoint() error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	target := d.written
+	d.waiters++
+	d.cond.Broadcast()
+	for d.applied < target && d.err == nil {
+		d.cond.Wait()
+	}
+	d.waiters--
+	return d.err
+}
+
+// applyState reports the published image version and the unapplied journal bytes.
+func (d *diskWriter) applyState() (uint64, int64) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.appliedVersion, d.written - d.applied
+}
+
 func (d *diskWriter) rotate() error {
 	if d.journal != nil {
 		if err := d.journal.Close(); err != nil {
 			return err
 		}
 	}
+	f, err := os.OpenFile(d.journalPath(d.epoch+1), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	d.journal = f
+	d.mu.Lock()
 	d.epoch++
 	d.journalBytes = 0
-	var err error
-	d.journal, err = os.OpenFile(filepath.Join(d.db.dir, "log", fmt.Sprintf("%020d.journal", d.epoch)), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	return err
+	d.cond.Broadcast()
+	d.mu.Unlock()
+	d.hook("rotated")
+	return nil
+}
+
+// final copies the block's committed bytes at absolute offset off into dst.
+func (b *block) final(dst []byte, off uint64) {
+	for len(dst) > 0 {
+		i, ok := slices.BinarySearch(b.ids, uint32(off/LeafSize))
+		if !ok {
+			panic("pagerdb: undo range outside the snapshot")
+		}
+		n := copy(dst, b.data[uint64(i)*LeafSize+off%LeafSize:uint64(i+1)*LeafSize])
+		dst, off = dst[n:], off+uint64(n)
+	}
 }
 func (d *diskWriter) append(b *block) error {
-	// Header: magic, frame bytes, version, parent version, root, undo bytes,
-	// flags (1 = rewind), reserved. Footer CRC-32C covers header and undo.
-	record := slices.Grow(d.record[:0], 88+len(b.undo)+4)[:88]
+	d.mu.Lock()
+	if d.written-d.applied > d.lagLimit {
+		d.waiters++
+		d.cond.Broadcast()
+		for d.written-d.applied > d.lagLimit && d.err == nil {
+			d.cond.Wait()
+		}
+		d.waiters--
+	}
+	err := d.err
+	d.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	size := frameHeader + len(b.undo) + 4
+	if b.rewind {
+		size = frameHeader + len(b.ids)*(16+LeafSize) + 4
+	}
+	record := slices.Grow(d.record[:0], size)[:frameHeader]
 	clear(record)
-	copy(record, "PGJNL003")
-	le.PutUint64(record[8:], uint64(88+len(b.undo)+4))
+	copy(record, "PGJNL004")
 	le.PutUint64(record[16:], b.version)
 	le.PutUint64(record[24:], b.parent)
 	copy(record[32:64], b.root[:])
-	le.PutUint64(record[64:], uint64(len(b.undo)))
 	if b.rewind {
-		le.PutUint64(record[72:], 1)
+		// A rewind's redo is every leaf it changed.
+		le.PutUint64(record[64:], 1)
+		for i, id := range b.ids {
+			record = le.AppendUint64(record, uint64(id)*LeafSize)
+			record = append(record, b.data[i*LeafSize:(i+1)*LeafSize]...)
+			record = le.AppendUint64(record, LeafSize)
+		}
+	} else {
+		// Redo reuses the undo record layout with the block's final bytes. Repeated
+		// ranges carry the same final bytes, so their order does not matter.
+		record = append(record, b.undo...)
+		r := record[frameHeader:]
+		for end := len(r); end > 0; {
+			n := int(le.Uint64(r[end-8:]))
+			start := end - 16 - n
+			b.final(r[start+8:end-8], le.Uint64(r[start:]))
+			end = start
+		}
 	}
-	record = append(record, b.undo...)
+	le.PutUint64(record[8:], uint64(len(record)+4))
 	record = le.AppendUint32(record, crc32.Checksum(record, crcTable))
 	d.record = record
 	if d.journalBytes > 0 && d.journalBytes+int64(len(record)) > d.db.o.EpochBytes {
@@ -318,7 +596,11 @@ func (d *diskWriter) append(b *block) error {
 		}
 	}
 	n, err := d.journal.Write(record)
+	d.mu.Lock()
 	d.journalBytes += int64(n)
+	d.written += int64(n)
+	d.cond.Broadcast()
+	d.mu.Unlock()
 	if err == nil && n != len(record) {
 		err = io.ErrShortWrite
 	}
@@ -331,7 +613,7 @@ func (d *diskWriter) enqueue(b *block) {
 	}
 	d.queue[(d.queueHead+d.queueLength)%len(d.queue)] = b
 	d.queueLength++
-	d.cond.Signal()
+	d.cond.Broadcast()
 	d.mu.Unlock()
 }
 func (d *diskWriter) failure() error { d.mu.Lock(); defer d.mu.Unlock(); return d.err }
@@ -357,19 +639,7 @@ func (d *diskWriter) run() {
 			if d.db.beforeDisk != nil {
 				d.db.beforeDisk()
 			}
-			if b.journal {
-				err = d.append(b)
-			}
-			if err == nil {
-				for i, id := range b.ids {
-					p := uint64(id) * LeafSize
-					copy(d.image[p:p+LeafSize], b.data[i*LeafSize:(i+1)*LeafSize])
-					d.mark(id)
-				}
-				if b.checkpoint {
-					err = d.checkpoint(b.version, b.root)
-				}
-			}
+			err = d.append(b)
 		}
 		b.data = nil
 		b.ids = nil
@@ -377,7 +647,8 @@ func (d *diskWriter) run() {
 		b.snapshot = nil
 		if err != nil {
 			d.mu.Lock()
-			d.err = err
+			d.err = errors.Join(d.err, err)
+			d.cond.Broadcast()
 			d.mu.Unlock()
 		}
 		if slot != nil {
@@ -385,12 +656,40 @@ func (d *diskWriter) run() {
 		}
 		b.persisted.Done()
 	}
-	err := errors.Join(d.journal.Close(), d.file.Close(), unix.Munmap(d.image))
+}
+
+// stop drains the disk queue, then stops the applier after its current batch.
+// Frames it has not applied stay in the journal and replay on the next Open.
+func (d *diskWriter) stop() {
+	d.mu.Lock()
+	d.stopping = true
+	d.cond.Broadcast()
+	d.mu.Unlock()
+	<-d.done
+	d.mu.Lock()
+	d.applyStop = true
+	d.cond.Broadcast()
+	d.mu.Unlock()
+	<-d.applyDone
+	d.timer.Stop()
+	err := d.closeFiles()
 	d.mu.Lock()
 	d.err = errors.Join(d.err, err)
 	d.mu.Unlock()
 }
-func (d *diskWriter) stop() { d.mu.Lock(); d.stopping = true; d.cond.Signal(); d.mu.Unlock(); <-d.done }
+func (d *diskWriter) closeFiles() error {
+	var errs []error
+	for _, f := range []*os.File{d.journal, d.reader, d.image} {
+		if f != nil {
+			errs = append(errs, f.Close())
+		}
+	}
+	if d.mapped != nil {
+		errs = append(errs, unix.Munmap(d.mapped))
+	}
+	d.journal, d.reader, d.image, d.mapped = nil, nil, nil, nil
+	return errors.Join(errs...)
+}
 
 func validateAlloc(state []byte, n uint64) error {
 	if string(state[:8]) != "PAGER003" || le.Uint64(state[8:]) != n {
@@ -450,16 +749,22 @@ func (db *DB) rebuild() ([32]byte, error) {
 		}
 	}
 	slices.Sort(ids)
-	// Bound scratch memory when verifying a large region.
-	for len(ids) > 0 {
-		n := min(len(ids), 1024)
-		data := make([]byte, n*LeafSize)
-		for i, id := range ids[:n] {
-			p := uint64(id) * LeafSize
-			copy(data[i*LeafSize:], db.state[p:p+LeafSize])
-		}
-		t.update(ids[:n], data, db.pool)
-		ids = ids[n:]
-	}
+	hashLeaves(t, db.state, ids, db.pool)
 	return t.root(), nil
 }
+
+// hashLeaves hashes sorted state leaves into t, bounding scratch memory.
+func hashLeaves(t *tree, state []byte, ids []uint32, p *pool) {
+	data := make([]byte, min(len(ids), 1024)*LeafSize)
+	for len(ids) > 0 {
+		n := min(len(ids), 1024)
+		for i, id := range ids[:n] {
+			copy(data[i*LeafSize:(i+1)*LeafSize], state[uint64(id)*LeafSize:])
+		}
+		t.update(ids[:n], data[:n*LeafSize], p)
+		ids = ids[n:]
+	}
+}
+
+// hashDirty hashes every dirty leaf into the live tree and clears the bitmap.
+func (db *DB) hashDirty() { hashLeaves(db.tree, db.state, db.takeDirty(nil), db.pool) }
