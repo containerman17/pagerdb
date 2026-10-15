@@ -104,11 +104,12 @@ workload allocates no heap memory per block, including its hash and journal work
 buffer growth, checkpoints and epoch rotation can allocate.
 
 A separate disk worker appends one journal frame per block with no per-block
-fsync. A frame holds redo records only: each range the block wrote, with the
-block's final bytes taken from the snapshot. Repeated ranges in one block carry
-the same final bytes, so redo order inside a frame does not matter. A rewind
-frame's redo is every leaf the rewind changed. Old bytes stay in RAM for Mark,
-Undo, View and Rewind; the journal does not keep them.
+fsync. A frame holds redo records only. The worker marks every 32-byte chunk
+that the block's undo records touch, then writes each changed leaf once, in leaf
+order: the leaf id, a 128-bit chunk mask and the final bytes of the marked
+chunks, read from the snapshot. Repeated writes to one chunk cost one chunk. A
+rewind frame marks every chunk of every leaf the rewind changed. Old bytes stay
+in RAM for Mark, Undo, View and Rewind; the journal does not keep them.
 
 The state image lives in one file, `image`, the size of the state and leaf
 aligned. It is sparse until written. A background applier keeps it current:
@@ -186,10 +187,11 @@ root [32] | flags u64 | redo payload | CRC-32C u32
 ```
 
 Flags value 1 denotes Rewind; any other nonzero value is invalid. The redo
-payload repeats `absolute offset u64 | bytes [length] | length u64`. Traverse it
-backward from the final length. Redo bytes are the block's final bytes for each
-written range, or whole leaves for a rewind. Frame size includes the header and
-checksum. CRC covers header and payload. Frames never cross epoch
+payload repeats `leaf id u64 | chunk mask u64 [2] | chunks`, in increasing leaf
+order. Bit c of the mask (word c/64, bit c%64) marks the 32-byte chunk at leaf
+offset 32c; the chunks follow in increasing c with their final bytes. A record
+with an empty mask or a leaf outside MaxLeaves is invalid. Frame size includes
+the header and checksum. CRC covers header and payload. Frames never cross epoch
 files. The parent/version fields and rewind flag identify branch changes. After a
 crash the first new frame's parent is the recovered version.
 

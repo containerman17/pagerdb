@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math/bits"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -44,6 +45,7 @@ type diskWriter struct {
 	db          *DB
 	journal     *os.File
 	record      []byte
+	masks       [][2]uint64
 	queue       [snapshotCount + 1]*block
 	queueHead   int
 	queueLength int
@@ -317,23 +319,35 @@ func (d *diskWriter) readFrame(f *os.File, off, end int64) ([]byte, error) {
 }
 func redoOf(frame []byte) []byte { return frame[frameHeader : len(frame)-4] }
 
-// walk visits undo-format records backward, checking bounds before each visit.
+// chunk is the redo granularity: a leaf has 128 chunks, one mask bit each.
+const chunk = 32
+
+// walk visits redo records (leaf id u64, two u64 chunk masks, the set chunks'
+// bytes), one call per run of set chunks, checking bounds before each visit.
 func walk(records []byte, limit uint64, fn func(off uint64, b []byte)) error {
-	for end := uint64(len(records)); end > 0; {
-		if end < 16 {
+	for len(records) > 0 {
+		if len(records) < 24 {
 			return errRecord
 		}
-		n := le.Uint64(records[end-8:])
-		if n > end-16 {
+		leaf, m := le.Uint64(records), [2]uint64{le.Uint64(records[8:]), le.Uint64(records[16:])}
+		records = records[24:]
+		n := chunk * (bits.OnesCount64(m[0]) + bits.OnesCount64(m[1]))
+		if leaf >= limit/LeafSize || n == 0 || n > len(records) {
 			return errRecord
 		}
-		start := end - 16 - n
-		off := le.Uint64(records[start:])
-		if off > limit || n > limit-off {
-			return errRecord
+		set := func(c int) bool { return c < 128 && m[c/64]>>(c%64)&1 == 1 }
+		for c := 0; c < 128; c++ {
+			if !set(c) {
+				continue
+			}
+			start := c
+			for set(c + 1) {
+				c++
+			}
+			k := (c + 1 - start) * chunk
+			fn(leaf*LeafSize+uint64(start*chunk), records[:k])
+			records = records[k:]
 		}
-		fn(off, records[start+8:end-8])
-		end = start
 	}
 	return nil
 }
@@ -532,14 +546,20 @@ func (d *diskWriter) rotate() error {
 }
 
 // final copies the block's committed bytes at absolute offset off into dst.
-func (b *block) final(dst []byte, off uint64) {
-	for len(dst) > 0 {
-		i, ok := slices.BinarySearch(b.ids, uint32(off/LeafSize))
+// mark sets the mask bit of every chunk in [off, off+n). The block's sorted ids
+// map each leaf to its mask and snapshot index.
+func (b *block) mark(masks [][2]uint64, off, n uint64) {
+	for end := off + n; off < end; {
+		leaf := off / LeafSize
+		i, ok := slices.BinarySearch(b.ids, uint32(leaf))
 		if !ok {
 			panic("pagerdb: undo range outside the snapshot")
 		}
-		n := copy(dst, b.data[uint64(i)*LeafSize+off%LeafSize:uint64(i+1)*LeafSize])
-		dst, off = dst[n:], off+uint64(n)
+		last := min(end, (leaf+1)*LeafSize) - 1
+		for c := off % LeafSize / chunk; c <= last%LeafSize/chunk; c++ {
+			masks[i][c/64] |= 1 << (c % 64)
+		}
+		off = last + 1
 	}
 }
 func (d *diskWriter) append(b *block) error {
@@ -557,10 +577,23 @@ func (d *diskWriter) append(b *block) error {
 	if err != nil {
 		return err
 	}
-	size := frameHeader + len(b.undo) + 4
+	masks := slices.Grow(d.masks[:0], len(b.ids))[:len(b.ids)]
+	d.masks = masks
 	if b.rewind {
-		size = frameHeader + len(b.ids)*(16+LeafSize) + 4
+		// A rewind's redo is every leaf it changed.
+		for i := range masks {
+			masks[i] = [2]uint64{^uint64(0), ^uint64(0)}
+		}
+	} else {
+		clear(masks)
+		for u := b.undo; len(u) > 0; {
+			n := le.Uint64(u[len(u)-8:])
+			start := len(u) - 16 - int(n)
+			b.mark(masks, le.Uint64(u[start:]), n)
+			u = u[:start]
+		}
 	}
+	size := frameHeader + 4 + len(b.ids)*24 + min(len(b.undo), len(b.data))
 	record := slices.Grow(d.record[:0], size)[:frameHeader]
 	clear(record)
 	copy(record, "PGJNL004")
@@ -568,23 +601,22 @@ func (d *diskWriter) append(b *block) error {
 	le.PutUint64(record[24:], b.parent)
 	copy(record[32:64], b.root[:])
 	if b.rewind {
-		// A rewind's redo is every leaf it changed.
 		le.PutUint64(record[64:], 1)
-		for i, id := range b.ids {
-			record = le.AppendUint64(record, uint64(id)*LeafSize)
-			record = append(record, b.data[i*LeafSize:(i+1)*LeafSize]...)
-			record = le.AppendUint64(record, LeafSize)
+	}
+	// Leaf order reads the snapshot forward; random undo order missed the cache.
+	for i, m := range masks {
+		if m == [2]uint64{} {
+			continue
 		}
-	} else {
-		// Redo reuses the undo record layout with the block's final bytes. Repeated
-		// ranges carry the same final bytes, so their order does not matter.
-		record = append(record, b.undo...)
-		r := record[frameHeader:]
-		for end := len(r); end > 0; {
-			n := int(le.Uint64(r[end-8:]))
-			start := end - 16 - n
-			b.final(r[start+8:end-8], le.Uint64(r[start:]))
-			end = start
+		record = le.AppendUint64(record, uint64(b.ids[i]))
+		record = le.AppendUint64(record, m[0])
+		record = le.AppendUint64(record, m[1])
+		leaf := b.data[i*LeafSize : (i+1)*LeafSize]
+		for w, x := range m {
+			for ; x != 0; x &= x - 1 {
+				c := w*64 + bits.TrailingZeros64(x)
+				record = append(record, leaf[c*chunk:(c+1)*chunk]...)
+			}
 		}
 	}
 	le.PutUint64(record[8:], uint64(len(record)+4))
