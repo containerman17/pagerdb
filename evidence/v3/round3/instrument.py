@@ -44,9 +44,12 @@ edit('pagerdb.go', 'db.pool.each(len(slot.ids), db.copyLeaf)', '''copyStart := t
 edit('pagerdb.go', 'db.jobs <- b', '''submitStart := time.Now()
  db.jobs <- b
  db.diag.add(6, time.Since(submitStart))''')
-edit('pagerdb.go', 'db.undo = le.AppendUint64(db.undo, off)', '''var growStart time.Time
+growth_anchor = ('needed := len(db.undo) + 16 + int(n)'
+                 if 'needed := len(db.undo)' in (dest / 'pagerdb.go').read_text()
+                 else 'db.undo = le.AppendUint64(db.undo, off)')
+edit('pagerdb.go', growth_anchor, """var growStart time.Time
  if uint64(len(db.undo))+n+16 > uint64(cap(db.undo)) { growStart = time.Now() }
- db.undo = le.AppendUint64(db.undo, off)''')
+ """ + growth_anchor)
 edit('pagerdb.go', 'db.markDirty(off, n)', '''db.markDirty(off, n)
  if !growStart.IsZero() {
  db.diag.grows++

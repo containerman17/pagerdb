@@ -83,6 +83,8 @@ type DB struct {
 	history      []*block
 	latest       *block
 	undo         []byte
+	undoLast     int
+	undoHint     int
 	dirtyBits    []uint64
 	dirtyStart   uint64 // Inclusive first dirty bitmap word.
 	dirtyEnd     uint64 // Exclusive last dirty bitmap word.
@@ -216,6 +218,13 @@ func (db *DB) touch(off, n uint64) {
 	if n == 0 {
 		return
 	}
+	needed := len(db.undo) + 16 + int(n)
+	if needed > cap(db.undo) {
+		capacity := max(needed, 2*cap(db.undo), db.undoHint)
+		grown := make([]byte, len(db.undo), capacity)
+		copy(grown, db.undo)
+		db.undo = grown
+	}
 	db.undo = le.AppendUint64(db.undo, off)
 	db.undo = append(db.undo, db.state[off:off+n]...)
 	db.undo = le.AppendUint64(db.undo, n)
@@ -291,6 +300,9 @@ func (db *DB) Commit() (uint64, error) {
 	b.parent = db.version
 	db.version++
 	b.version = db.version
+	// Two consecutive sizes avoid seeding every buffer from one large setup block.
+	db.undoHint = min(db.undoLast, len(db.undo))
+	db.undoLast = len(db.undo)
 	db.undo, b.undo = b.undo[:0], db.undo
 	db.generation++
 	b.checkpoint = b.version%db.o.CheckpointInterval == 0

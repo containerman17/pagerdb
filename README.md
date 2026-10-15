@@ -76,7 +76,10 @@ precomputed empty hashes. No state file is mapped into the writer's address spac
 Write and Touch append absolute offsets and old bytes to an in-RAM undo buffer,
 then set dirty-leaf bits. They do not deduplicate: the caller can use first-write
 tracking where its transaction semantics permit it. Mark/Undo need every change
-since a mark. The packed buffer has no Go object per write.
+since a mark. The packed buffer has no Go object per write. Capacity grows by
+at least doubling and stays with each reusable buffer. The smaller of the last
+two block sizes seeds a fresh buffer, avoiding repeated growth during steady
+workloads without propagating a single large setup block to every buffer.
 
 Commit waits for the previous hash and a free snapshot slot, then scans dirty
 bitmap words in order. It extracts set bits with trailing-zero counts and clears

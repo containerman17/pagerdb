@@ -654,5 +654,333 @@
         }
       ]
     }
+  ],
+  "evidence/v3/round3/undo.txt": [
+    {
+      "blocks": 700,
+      "write_p99_ms": 1.220167,
+      "write_warm_p99_ms": 1.216084,
+      "commit_p99_ms": 1.119916,
+      "undo_growth_calls": 52.0,
+      "undo_growth_ms": 1.128421,
+      "undo_growth_blocks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "ring_pending_blocks": 22.0,
+      "waits": {
+        "ring": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 22.0,
+          "ms": 54.718714,
+          "ms_per_block": 0.07816959142857142
+        },
+        "hash": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.017751,
+          "ms_per_block": 2.5358571428571426e-05
+        },
+        "meta_hash": {
+          "calls": 1369.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.048716,
+          "ms_per_block": 6.959428571428571e-05
+        },
+        "meta_disk": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.009323999999999999,
+          "ms_per_block": 1.3319999999999998e-05
+        },
+        "failure": {
+          "calls": 1400.0,
+          "slow_calls_ge_1us": 1.0,
+          "ms": 0.049562999999999996,
+          "ms_per_block": 7.080428571428571e-05
+        },
+        "copy": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 700.0,
+          "ms": 18.190089,
+          "ms_per_block": 0.025985841428571427
+        },
+        "submit": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 224.0,
+          "ms": 0.647719,
+          "ms_per_block": 0.0009253128571428572
+        }
+      },
+      "slowest_write_blocks": [
+        {
+          "block": 0.0,
+          "write_ms": 1.306916,
+          "grows": 17.0,
+          "grow_ms": 0.165501,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 4.2e-05
+        },
+        {
+          "block": 507.0,
+          "write_ms": 1.280416,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 29.0,
+          "write_ms": 1.27275,
+          "grows": 1.0,
+          "grow_ms": 0.031333,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 4.2e-05
+        },
+        {
+          "block": 541.0,
+          "write_ms": 1.252042,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 643.0,
+          "write_ms": 1.239166,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 82.0,
+          "write_ms": 1.2355,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.000125
+        },
+        {
+          "block": 378.0,
+          "write_ms": 1.232792,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        }
+      ]
+    },
+    {
+      "blocks": 700,
+      "write_p99_ms": 1.67775,
+      "write_warm_p99_ms": 1.682834,
+      "commit_p99_ms": 0.043333,
+      "undo_growth_calls": 52.0,
+      "undo_growth_ms": 1.034838,
+      "undo_growth_blocks": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ],
+      "ring_pending_blocks": 0.0,
+      "waits": {
+        "ring": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.010627,
+          "ms_per_block": 1.518142857142857e-05
+        },
+        "hash": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.018423,
+          "ms_per_block": 2.6318571428571427e-05
+        },
+        "meta_hash": {
+          "calls": 1369.0,
+          "slow_calls_ge_1us": 1.0,
+          "ms": 0.066887,
+          "ms_per_block": 9.555285714285715e-05
+        },
+        "meta_disk": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 0.0,
+          "ms": 0.00921,
+          "ms_per_block": 1.3157142857142856e-05
+        },
+        "failure": {
+          "calls": 1400.0,
+          "slow_calls_ge_1us": 1.0,
+          "ms": 0.048107,
+          "ms_per_block": 6.872428571428571e-05
+        },
+        "copy": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 700.0,
+          "ms": 17.900305,
+          "ms_per_block": 0.025571864285714285
+        },
+        "submit": {
+          "calls": 700.0,
+          "slow_calls_ge_1us": 159.0,
+          "ms": 0.627714,
+          "ms_per_block": 0.0008967342857142857
+        }
+      },
+      "slowest_write_blocks": [
+        {
+          "block": 607.0,
+          "write_ms": 2.278875,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 576.0,
+          "write_ms": 2.237208,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 4.2e-05
+        },
+        {
+          "block": 577.0,
+          "write_ms": 1.88125,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 4.2e-05
+        },
+        {
+          "block": 572.0,
+          "write_ms": 1.856792,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 4.2e-05
+        },
+        {
+          "block": 575.0,
+          "write_ms": 1.776458,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 574.0,
+          "write_ms": 1.688292,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        },
+        {
+          "block": 584.0,
+          "write_ms": 1.682834,
+          "grows": 0.0,
+          "grow_ms": 0.0,
+          "gc": 0.0,
+          "assist_ms": 0.0,
+          "ring_pending": 0.0,
+          "ring_ms": 0.0
+        }
+      ]
+    }
   ]
 }
