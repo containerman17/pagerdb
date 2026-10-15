@@ -251,6 +251,21 @@ snapshot growth, unchanged capacity after smaller blocks, full-ring backpressure
 and rewind after repeated metadata reuse.
 Evidence under `evidence/` predating v3 describes the old implementation.
 
+## Changes from the in-RAM image (PGCKP003)
+
+- The disk writer no longer keeps a second anonymous copy of the state. The image
+  is a file, updated in the background from synced journal frames, and CURRENT
+  names the journal position it covers. Checkpoint files are gone.
+- Journal frames (PGJNL004) carry redo, not undo. Format 003 stores do not open.
+- `Options.CheckpointInterval` is removed. Flush waits for journal writes only;
+  Checkpoint waits until the image covers the head. Open replays the journal after
+  CURRENT, so it recovers to the last complete frame, not to the last checkpoint.
+- Measured on a 16-core c8id.8xlarge (Linux): RssAnon for a 16 GiB state fell from
+  32.5 GiB to 16.5 GiB. With a 24 GiB state under a 12.8 GB cgroup cap, swap use fell
+  from 38.4 GiB to 22.6 GiB at the same sigma 1% throughput (1.84M to 1.85M
+  writes/s). Same-box BenchmarkEVM and Wasm host replays stayed within -2.3% to
+  +2.7% of 9eac657.
+
 ## Phase 2
 
 Sealing, sealed epochs/chapters, S3 storage, Export/Import, ViewRoot, history beyond
