@@ -1,0 +1,13 @@
+Shared benchmark lock acquired; correctness run only.
+goos: darwin
+goarch: arm64
+pkg: github.com/containerman17/pagerdb
+cpu: Apple M3
+BenchmarkCommitReusable/leaves8-8         	    1000	     28367 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCommitReusable/leaves8-8         	    1000	     22394 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCommitReusable/leaves8-8         	    1000	     20530 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCommitReusable/leaves512-8       	    1000	    306320 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCommitReusable/leaves512-8       	    1000	    308371 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCommitReusable/leaves512-8       	    1000	    303167 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	github.com/containerman17/pagerdb	1.414s

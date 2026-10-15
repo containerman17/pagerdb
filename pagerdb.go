@@ -8,9 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/bits"
 	"os"
 	"path/filepath"
-	"slices"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -83,8 +83,9 @@ type DB struct {
 	history      []*block
 	latest       *block
 	undo         []byte
-	dirty        []uint32
 	dirtyBits    []uint64
+	dirtyStart   uint64 // Inclusive first dirty bitmap word.
+	dirtyEnd     uint64 // Exclusive last dirty bitmap word.
 	generation   uint64
 	jobs         chan *block
 	hashDone     chan struct{}
@@ -166,6 +167,7 @@ func Open(dir string, o Options) (_ *DB, err error) {
 	}
 	db.pool = newPool(o.Workers)
 	db.dirtyBits = make([]uint64, (o.MaxLeaves+63)/64)
+	db.dirtyStart = uint64(len(db.dirtyBits))
 	db.undo = make([]byte, 0, 1<<20)
 	db.history = make([]*block, 0, o.RetainVersions+1)
 	db.blocks = make([]block, o.RetainVersions+snapshotCount+1)
@@ -197,10 +199,13 @@ func (db *DB) markDirty(off, n uint64) {
 		return
 	}
 	for i := off / LeafSize; i <= (off+n-1)/LeafSize; i++ {
-		mask := uint64(1) << (i % 64)
-		if db.dirtyBits[i/64]&mask == 0 {
-			db.dirtyBits[i/64] |= mask
-			db.dirty = append(db.dirty, uint32(i))
+		word, mask := i/64, uint64(1)<<(i%64)
+		if db.dirtyBits[word]&mask == 0 {
+			if db.dirtyBits[word] == 0 {
+				db.dirtyStart = min(db.dirtyStart, word)
+				db.dirtyEnd = max(db.dirtyEnd, word+1)
+			}
+			db.dirtyBits[word] |= mask
 		}
 	}
 }
@@ -331,8 +336,15 @@ func (db *DB) snapshot() *block {
 	db.nextSnapshot = (db.nextSnapshot + 1) % len(db.snapshots)
 	slot.done.Wait()
 	b := db.acquireBlock()
-	slices.Sort(db.dirty)
-	slot.ids, db.dirty = db.dirty, slot.ids[:0]
+	slot.ids = slot.ids[:0]
+	for word := db.dirtyStart; word < db.dirtyEnd; word++ {
+		for pending := db.dirtyBits[word]; pending != 0; pending &= pending - 1 {
+			slot.ids = append(slot.ids, uint32(word*64+uint64(bits.TrailingZeros64(pending))))
+		}
+		db.dirtyBits[word] = 0
+	}
+	db.dirtyStart = uint64(len(db.dirtyBits))
+	db.dirtyEnd = 0
 	size := len(slot.ids) * LeafSize
 	if cap(slot.data) < size {
 		// Geometric growth avoids reallocating for each small new high-water mark.
@@ -343,9 +355,6 @@ func (db *DB) snapshot() *block {
 	db.copying = slot
 	db.pool.each(len(slot.ids), db.copyLeaf)
 	db.copying = nil
-	for _, id := range slot.ids {
-		db.dirtyBits[id/64] &= ^(uint64(1) << (id % 64))
-	}
 	b.ids = slot.ids
 	b.data = slot.data
 	b.snapshot = slot
@@ -457,7 +466,7 @@ func (db *DB) release() error {
 	db.blocks = nil
 	db.latest = nil
 	db.undo = nil
-	db.dirty = nil
+	db.dirtyBits = nil
 	if db.disk != nil {
 		db.disk.record = nil
 		db.disk.changed = nil

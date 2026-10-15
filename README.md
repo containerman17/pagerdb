@@ -78,10 +78,12 @@ then set dirty-leaf bits. They do not deduplicate: the caller can use first-writ
 tracking where its transaction semantics permit it. Mark/Undo need every change
 since a mark. The packed buffer has no Go object per write.
 
-Commit waits for the previous hash and a free snapshot slot, sorts dirty leaf IDs,
-and copies leaves with the persistent worker pool. It submits an immutable snapshot.
-Those same
-workers hash leaves and fold sorted parent paths while the owner executes the
+Commit waits for the previous hash and a free snapshot slot, then scans dirty
+bitmap words in order. It extracts set bits with trailing-zero counts and clears
+each scanned word. The scan covers only the range between the first and last
+dirty word. No dirty-ID sort is needed. The persistent worker pool copies leaves
+into an immutable snapshot, then hashes leaves and folds sorted parent paths
+while the owner executes the
 next block. At most one hash overlaps one execution. Hash completion publishes
 the root independently of journal completion.
 
