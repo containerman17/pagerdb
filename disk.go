@@ -355,7 +355,7 @@ func walk(records []byte, limit uint64, fn func(off uint64, b []byte)) error {
 
 // publish makes the image durable, then names it in CURRENT with an atomic rename.
 func (d *diskWriter) publish(version uint64, root [32]byte) error {
-	if err := unix.Msync(d.mapped, unix.MS_SYNC); err != nil {
+	if err := syncImage(d.mapped, int(d.image.Fd())); err != nil {
 		return err
 	}
 	d.hook("image-synced")

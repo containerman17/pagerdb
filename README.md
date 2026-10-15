@@ -119,7 +119,11 @@ aligned. It is sparse until written. A background applier keeps it current:
    frames reach the image, so the image never holds a block the journal lost.
 3. Copy each frame's redo into a MAP_SHARED mapping of the image file. A leaf
    rewritten by several blocks in one batch reaches the disk once.
-4. msync the image, write `CURRENT.tmp`, fsync it, rename it to CURRENT and
+4. Sync the image. On Linux the applier first drops the mapping's page table
+   entries (MADV_DONTNEED keeps the data dirty in the page cache), then calls
+   fdatasync, so writeback never write-protects mapped pages and never sends
+   TLB-flush interrupts to the writer's cores. macOS uses msync. Then write
+   `CURRENT.tmp`, fsync it, rename it to CURRENT and
    fsync the directory. CURRENT names the journal position after the last
    applied frame, its version and root.
 5. Delete journal epochs that lie entirely before that position.
