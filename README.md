@@ -62,7 +62,10 @@ independently of the DB. Do not mutate a View concurrently with its readers.
 
 ## Design
 
-Leaves are **4096 bytes**, a consensus constant. Leaves use SHA-256 over their
+Leaves are **4096 bytes** by default, a consensus constant. The build tags
+`pagerdb_leaf1k` and `pagerdb_leaf512` select 1024 or 512-byte leaves; they change
+every root, and a store opens only with the leaf size that created it (Open
+rejects the image size). Leaves use SHA-256 over their
 bytes; parents use SHA-256(left || right). Empty subtree hashes are precomputed.
 Capacity is a fixed power of two. The root includes allocation metadata and all
 state bytes, including zero padding. A region allocator uses contiguous,
@@ -80,7 +83,10 @@ background applier writes the image file.
 Write and Touch append absolute offsets and old bytes to an in-RAM undo buffer,
 then set dirty-leaf bits. They do not deduplicate: the caller can use first-write
 tracking where its transaction semantics permit it. Mark/Undo need every change
-since a mark. The packed buffer has no Go object per write. Capacity grows by
+since a mark. The packed buffer has no Go object per write. Undo buffers and
+snapshot slots are anonymous mappings outside the Go heap: they do not raise the
+GC target, and growth maps a larger buffer, copies and unmaps the old one at once,
+so no idle copy stays in the Go heap. Capacity grows by
 at least doubling and stays with each reusable buffer. The smaller of the last
 two block sizes seeds a fresh buffer, avoiding repeated growth during steady
 workloads without propagating a single large setup block to every buffer.
@@ -97,8 +103,7 @@ the root independently of journal completion.
 Three strongly retained snapshot buffers form a fixed ring. A slot stays immutable
 until the disk worker finishes with it, including any checkpoint for that block.
 Buffers grow geometrically only when a block exceeds their capacity. Reuse never
-clears them; the parallel copy overwrites exactly the required bytes. GC cannot
-discard these buffers. Metadata/completion objects, undo buffers, dirty IDs, hash
+clears them; the parallel copy overwrites exactly the required bytes. Metadata/completion objects, undo buffers, dirty IDs, hash
 scratch space, and the journal assembly buffer are also reused. A warmed fixed
 workload allocates no heap memory per block, including its hash and journal work;
 buffer growth, checkpoints and epoch rotation can allocate.
@@ -193,8 +198,9 @@ root [32] | flags u64 | redo payload | CRC-32C u32
 Flags value 1 denotes Rewind; any other nonzero value is invalid. The redo
 payload repeats `leaf id u64 | chunk mask u64 [2] | chunks`, in increasing leaf
 order. Bit c of the mask (word c/64, bit c%64) marks the 32-byte chunk at leaf
-offset 32c; the chunks follow in increasing c with their final bytes. A record
-with an empty mask or a leaf outside MaxLeaves is invalid. Frame size includes
+offset 32c; the chunks follow in increasing c with their final bytes. A leaf has
+LeafSize/32 chunks. A record with an empty mask, a bit past the last chunk or a
+leaf outside MaxLeaves is invalid. Frame size includes
 the header and checksum. CRC covers header and payload. Frames never cross epoch
 files. The parent/version fields and rewind flag identify branch changes. After a
 crash the first new frame's parent is the recovered version.
@@ -205,7 +211,7 @@ version u64 | root [32] | reserved u32 | CRC-32C u32`. Its checksum covers the
 preceding 76 bytes.
 
 State leaf zero starts with `"PAGER003" [8] | MaxLeaves u64 | next region u64`.
-At offset 4096 the region table holds `(offset u64, size u64)` entries indexed by
+At offset LeafSize the region table holds `(offset u64, size u64)` entries indexed by
 handle. Size zero means absent. Data starts at the next leaf after the table.
 
 ## Verification
@@ -217,6 +223,7 @@ go test -race -count=1 ./...
 PAGERDB_EVM_RETAIN=32 go test -run '^$' -bench '^BenchmarkEVM$' -benchtime=200x
 PAGERDB_CRASH_ITERS=400 go test -run '^TestCrashRecovery$' -count=1 -v
 PAGERDB_MEM_GIB=4 go test -run '^TestMemoryFootprint$' -count=1 -v
+# the same checks with a smaller leaf: add -tags pagerdb_leaf1k or -tags pagerdb_leaf512
 ```
 
 TestCrashRecovery repeatedly SIGKILLs a child process that runs a deterministic
@@ -238,7 +245,7 @@ It includes the final journal drain (Flush). After the timer it reports the imag
 lag (`max-lag-versions`, `end-lag-versions`, `max-lag-MB`), the Checkpoint
 catch-up time, journal MB/s and, on Linux, peak RssAnon and device write MB/s
 (`PAGERDB_DISK=nvme1n1`). Commit timings measure snapshot plus prior hash
-wait, not blocking root calculation. Dirty-leaf counts use the 4 KiB constant.
+wait, not blocking root calculation. Dirty-leaf counts use LeafSize.
 Do not compare these timers directly with v2's blocking Commit/Seal timers.
 
 `go test -run '^$' -bench '^BenchmarkCommitReusable$' -benchmem -benchtime=1000x`

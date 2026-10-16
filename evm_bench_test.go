@@ -14,7 +14,7 @@ import (
 
 func evmSlots(t testing.TB, slots int, retain uint64) (*DB, Region) {
 	t.Helper()
-	db := openTest(t, Options{MaxLeaves: 1 << 16, RetainVersions: retain})
+	db := openTest(t, Options{MaxLeaves: 256 << 20 / LeafSize, RetainVersions: retain})
 	r := allocTest(t, db, slots*64)
 	buf := make([]byte, 64*1024)
 	for first := 0; first < slots; {
