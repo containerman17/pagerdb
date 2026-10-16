@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-var crashOptions = Options{MaxLeaves: 4096, RetainVersions: 8, EpochBytes: 64 << 10, Workers: 4}
+var crashOptions = Options{MaxLeaves: testLeaves, RetainVersions: 8, EpochBytes: 64 << 10, Workers: 4}
 
 // crashStep runs session step i: a rewind every 17th step, otherwise one block
 // of allocation changes, writes and partial undo. It depends only on seed, i and

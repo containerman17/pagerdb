@@ -320,8 +320,19 @@ func (d *diskWriter) readFrame(f *os.File, off, end int64) ([]byte, error) {
 }
 func redoOf(frame []byte) []byte { return frame[frameHeader : len(frame)-4] }
 
-// chunk is the redo granularity: a leaf has 128 chunks, one mask bit each.
-const chunk = 32
+// chunk is the redo granularity: a leaf has up to 128 chunks, one mask bit each.
+const (
+	chunk  = 32
+	chunks = LeafSize / chunk
+)
+
+// fullMask marks every chunk of a leaf.
+var fullMask = func() (m [2]uint64) {
+	for c := range chunks {
+		m[c/64] |= 1 << (c % 64)
+	}
+	return
+}()
 
 // walk visits redo records (leaf id u64, two u64 chunk masks, the set chunks'
 // bytes), one call per run of set chunks, checking bounds before each visit.
@@ -333,11 +344,11 @@ func walk(records []byte, limit uint64, fn func(off uint64, b []byte)) error {
 		leaf, m := le.Uint64(records), [2]uint64{le.Uint64(records[8:]), le.Uint64(records[16:])}
 		records = records[24:]
 		n := chunk * (bits.OnesCount64(m[0]) + bits.OnesCount64(m[1]))
-		if leaf >= limit/LeafSize || n == 0 || n > len(records) {
+		if leaf >= limit/LeafSize || n == 0 || n > len(records) || m[0]&^fullMask[0] != 0 || m[1]&^fullMask[1] != 0 {
 			return errRecord
 		}
-		set := func(c int) bool { return c < 128 && m[c/64]>>(c%64)&1 == 1 }
-		for c := 0; c < 128; c++ {
+		set := func(c int) bool { return c < chunks && m[c/64]>>(c%64)&1 == 1 }
+		for c := 0; c < chunks; c++ {
 			if !set(c) {
 				continue
 			}
@@ -583,7 +594,7 @@ func (d *diskWriter) append(b *block) error {
 	if b.rewind {
 		// A rewind's redo is every leaf it changed.
 		for i := range masks {
-			masks[i] = [2]uint64{^uint64(0), ^uint64(0)}
+			masks[i] = fullMask
 		}
 	} else {
 		clear(masks)

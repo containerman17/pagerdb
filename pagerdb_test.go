@@ -14,10 +14,13 @@ import (
 	"time"
 )
 
+// testLeaves keeps a 16 MiB test state at every leaf size.
+const testLeaves = 16 << 20 / LeafSize
+
 func openTest(t testing.TB, o Options) *DB {
 	t.Helper()
 	if o.MaxLeaves == 0 {
-		o.MaxLeaves = 4096
+		o.MaxLeaves = testLeaves
 	}
 	db, err := Open(t.TempDir(), o)
 	if err != nil {
@@ -180,7 +183,7 @@ func TestHistory(t *testing.T) {
 	want := db.Root()
 	must(t, db.Checkpoint())
 	must(t, db.Close())
-	re, e := Open(dir, Options{MaxLeaves: 4096})
+	re, e := Open(dir, Options{MaxLeaves: testLeaves})
 	must(t, e)
 	defer re.Close()
 	if re.Version() != 5 || re.Root() != want {
@@ -261,7 +264,7 @@ func TestJournalTornTail(t *testing.T) {
 	_, e = f.Write([]byte("torn frame"))
 	must(t, e)
 	must(t, f.Close())
-	re, e := Open(dir, Options{MaxLeaves: 4096})
+	re, e := Open(dir, Options{MaxLeaves: testLeaves})
 	must(t, e)
 	if re.Version() != 2 || re.Root() != want {
 		t.Fatal("tail recovery")
@@ -274,7 +277,7 @@ func TestJournalTornTail(t *testing.T) {
 	re.Write(r, 0, []byte("third!"))
 	third := commitTest(t, re)
 	must(t, re.Close())
-	re, e = Open(dir, Options{MaxLeaves: 4096})
+	re, e = Open(dir, Options{MaxLeaves: testLeaves})
 	must(t, e)
 	if re.Version() != 3 || re.Root() != third {
 		t.Fatal("append after torn tail")
@@ -284,10 +287,10 @@ func TestJournalTornTail(t *testing.T) {
 	// Corrupt published image bytes: the recovered root must not verify.
 	f, e = os.OpenFile(filepath.Join(dir, "image"), os.O_RDWR, 0600)
 	must(t, e)
-	_, e = f.WriteAt([]byte{99}, int64(dataStart(4096))+1)
+	_, e = f.WriteAt([]byte{99}, int64(dataStart(testLeaves))+1)
 	must(t, e)
 	must(t, f.Close())
-	if db, e = Open(dir, Options{MaxLeaves: 4096}); e == nil {
+	if db, e = Open(dir, Options{MaxLeaves: testLeaves}); e == nil {
 		db.Close()
 		t.Fatal("corruption accepted")
 	}
@@ -454,7 +457,7 @@ func TestAllocationHistoryModel(t *testing.T) {
 	must(t, db.Verify())
 	dir := db.dir
 	must(t, db.Close())
-	re, e := Open(dir, Options{MaxLeaves: 4096})
+	re, e := Open(dir, Options{MaxLeaves: testLeaves})
 	must(t, e)
 	defer re.Close()
 	if re.Root() != versions[6].root || re.Version() != 7 {
@@ -516,7 +519,7 @@ func TestMissingManifest(t *testing.T) {
 	dir := db.dir
 	must(t, db.Close())
 	must(t, os.Remove(filepath.Join(dir, "CURRENT")))
-	if reopened, e := Open(dir, Options{MaxLeaves: 4096}); e == nil {
+	if reopened, e := Open(dir, Options{MaxLeaves: testLeaves}); e == nil {
 		reopened.Close()
 		t.Fatal("silently reset an existing store")
 	}
@@ -531,7 +534,7 @@ func TestManifestRoot(t *testing.T) {
 	data[40] ^= 1
 	le.PutUint32(data[76:], checksum(data[:76]))
 	must(t, os.WriteFile(path, data, 0600))
-	if reopened, e := Open(dir, Options{MaxLeaves: 4096}); e == nil {
+	if reopened, e := Open(dir, Options{MaxLeaves: testLeaves}); e == nil {
 		reopened.Close()
 		t.Fatal("accepted a mismatched root")
 	}
@@ -541,7 +544,7 @@ func TestManifestRoot(t *testing.T) {
 // lag bound; past it the disk worker waits, the ring fills and Commit waits.
 func TestApplierLagBound(t *testing.T) {
 	db := openTest(t, Options{RetainVersions: 2})
-	r := allocTest(t, db, 4*LeafSize)
+	r := allocTest(t, db, 16<<10)
 	commitTest(t, db)
 	must(t, db.Checkpoint())
 	gate := make(chan struct{})
@@ -572,7 +575,7 @@ func TestApplierLagBound(t *testing.T) {
 	go func() {
 		var err error
 		for i := 0; i < 400 && err == nil; i++ {
-			db.Write(r, 0, bytes.Repeat([]byte{byte(i)}, 4*LeafSize))
+			db.Write(r, 0, bytes.Repeat([]byte{byte(i)}, 16<<10))
 			_, err = db.Commit()
 		}
 		finished <- err

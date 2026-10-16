@@ -6,7 +6,7 @@ import (
 )
 
 func TestDirtyBitmapOrder(t *testing.T) {
-	db := openTest(t, Options{MaxLeaves: 4096})
+	db := openTest(t, Options{MaxLeaves: testLeaves})
 	for _, want := range [][]uint32{
 		{0, 1, 63, 64, 65, 127, 128, 4095},
 		{},

@@ -131,7 +131,7 @@ func TestSnapshotRingBackpressure(t *testing.T) {
 	must(t, db.Verify())
 	dir, root := db.dir, db.Root()
 	must(t, db.Close())
-	re, err := Open(dir, Options{MaxLeaves: 4096})
+	re, err := Open(dir, Options{MaxLeaves: testLeaves})
 	must(t, err)
 	defer re.Close()
 	if re.Root() != root {

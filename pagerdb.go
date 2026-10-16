@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	LeafSize         = 4096
 	DefaultMaxLeaves = 1 << 22 // 16 GiB of virtual state space.
 	// Allocation metadata reserves one 16-byte entry per possible region.
 	headerSize = LeafSize
@@ -166,7 +165,7 @@ func Open(dir string, o Options) (_ *DB, err error) {
 	db.pool = newPool(o.Workers)
 	db.dirtyBits = make([]uint64, (o.MaxLeaves+63)/64)
 	db.dirtyStart = uint64(len(db.dirtyBits))
-	db.undo = make([]byte, 0, 1<<20)
+	db.undo = regrow(nil, 1<<20)
 	db.history = make([]*block, 0, o.RetainVersions+1)
 	db.blocks = make([]block, o.RetainVersions+snapshotCount+1)
 	db.copyLeaf = func(i int) {
@@ -217,15 +216,33 @@ func (db *DB) touch(off, n uint64) {
 	}
 	needed := len(db.undo) + 16 + int(n)
 	if needed > cap(db.undo) {
-		capacity := max(needed, 2*cap(db.undo), db.undoHint)
-		grown := make([]byte, len(db.undo), capacity)
-		copy(grown, db.undo)
-		db.undo = grown
+		db.undo = regrow(db.undo, max(needed, 2*cap(db.undo), db.undoHint))
 	}
 	db.undo = le.AppendUint64(db.undo, off)
 	db.undo = append(db.undo, db.state[off:off+n]...)
 	db.undo = le.AppendUint64(db.undo, n)
 	db.markDirty(off, n)
+}
+
+// Undo buffers and snapshot slots live in anonymous mappings outside the Go heap,
+// so a large live buffer does not raise the GC target and a replaced one is
+// returned to the OS at once instead of lingering as idle heap.
+func regrow(b []byte, capacity int) []byte {
+	grown, err := anonymous(capacity)
+	if err != nil {
+		panic(err)
+	}
+	grown = grown[:len(b)]
+	copy(grown, b)
+	unmap(b)
+	return grown
+}
+func unmap(b []byte) {
+	if cap(b) > 0 {
+		if err := unix.Munmap(b[:cap(b)]); err != nil {
+			panic(err)
+		}
+	}
 }
 func restore(state, records []byte, mark func(uint64, uint64)) {
 	for end := len(records); end > 0; {
@@ -346,7 +363,7 @@ func (db *DB) snapshot() *block {
 	if cap(slot.data) < size {
 		// Geometric growth avoids reallocating for each small new high-water mark.
 		capacity := min(len(db.state), max(size, 2*cap(slot.data)))
-		slot.data = make([]byte, capacity)
+		slot.data = regrow(slot.data[:0], capacity)[:capacity]
 	}
 	slot.data = slot.data[:size]
 	db.copying = slot
@@ -467,9 +484,14 @@ func (db *DB) Close() error {
 func (db *DB) release() error {
 	// Close can outlive the caller's DB pointer; drop strongly retained buffers.
 	for i := range db.snapshots {
+		unmap(db.snapshots[i].data)
 		db.snapshots[i].data = nil
 		db.snapshots[i].ids = nil
 	}
+	for i := range db.blocks {
+		unmap(db.blocks[i].undo)
+	}
+	unmap(db.undo)
 	db.history = nil
 	db.blocks = nil
 	db.latest = nil
