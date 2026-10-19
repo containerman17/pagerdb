@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	DefaultMaxLeaves = 1 << 22 // 16 GiB of virtual state space.
+	DefaultMaxLeaves = (16 << 30) / LeafSize // 16 GiB of virtual state space.
 	// Allocation metadata reserves one 16-byte entry per possible region.
 	headerSize = LeafSize
 )

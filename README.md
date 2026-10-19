@@ -62,10 +62,11 @@ independently of the DB. Do not mutate a View concurrently with its readers.
 
 ## Design
 
-Leaves are **4096 bytes** by default, a consensus constant. The build tags
-`pagerdb_leaf1k` and `pagerdb_leaf512` select 1024 or 512-byte leaves; they change
+Leaves are **1024 bytes** by default, a consensus constant. The build tags
+`pagerdb_leaf4k` and `pagerdb_leaf512` select 4096 or 512-byte leaves; they change
 every root, and a store opens only with the leaf size that created it (Open
-rejects the image size). Leaves use SHA-256 over their
+checks both the leaf count and image size). The `pagerdb_leaf1k` tag remains
+an alias for the default. Leaves use SHA-256 over their
 bytes; parents use SHA-256(left || right). Empty subtree hashes are precomputed.
 Capacity is a fixed power of two. The root includes allocation metadata and all
 state bytes, including zero padding. A region allocator uses contiguous,
@@ -176,7 +177,7 @@ is no migration. Capacity must match the creation value on Open.
 
 | Option | Default | Meaning |
 | --- | ---: | --- |
-| MaxLeaves | 2^22 | 16 GiB virtual capacity, range 2^8 through 2^32 leaves |
+| MaxLeaves | 2^24 at 1 KiB | 16 GiB virtual capacity, range 2^8 through 2^32 leaves |
 | Workers | 16 | Hash and snapshot workers, range 1 through 256 |
 | RetainVersions | 32 | Completed block undo transitions retained in RAM |
 | EpochBytes | 1 GiB | Journal file cut size; an oversized block stays intact |
@@ -278,8 +279,7 @@ Evidence under `evidence/` predating v3 describes the old implementation.
 Sealing, sealed epochs/chapters, S3 storage, Export/Import, ViewRoot, history beyond
 the RAM window remain deferred. Journal epochs before the image position are
 deleted, so the journal no longer keeps history for a later sealer.
-There is no Seal or pluggable EpochStore in this version. No PR or main-branch
-merge is part of this rewrite.
+There is no Seal or pluggable EpochStore in this version.
 
 ## License
 
